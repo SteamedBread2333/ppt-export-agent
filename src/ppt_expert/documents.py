@@ -18,12 +18,13 @@ def write_contracts(project_dir: Path, pages: list[StoryPage], design: DesignSpe
                 f"## {page.number}. {page.title}",
                 f"- Section: {page.section or 'Unassigned'}",
                 f"- Layout: {page.layout.value}",
+                f"- Family: {(page.family or page.resolved_family()).value}",
                 f"- Artwork: {page.image_id or 'None'} — {page.visual_direction}",
-                "- Core content:",
-                *[f"  - {item}" for item in page.content],
-                "",
             ]
         )
+        if page.takeaway:
+            story_lines.append(f"- Takeaway: {page.takeaway}")
+        story_lines.extend(["- Core content:", *[f"  - {item}" for item in page.content], ""])
     story_path.write_text("\n".join(story_lines), encoding="utf-8")
 
     design_lines = [
@@ -43,11 +44,15 @@ def write_contracts(project_dir: Path, pages: list[StoryPage], design: DesignSpe
             f"- Body font: {' → '.join([design.body_font, *design.body_font_fallbacks])}, "
             f"{design.body_size}pt"
         ),
+        f"- Latin / numeric: {design.latin_font or design.title_font} / {design.numeric_font or design.body_font}",
+        f"- East Asian: {design.east_asian_font or design.body_font}",
+        f"- Typography profile: {design.typography_profile}",
+        f"- Surface / muted: {design.surface or design.background} / {design.muted or design.text}",
         f"- Artwork direction: {design.illustration_style}",
         f"- Prohibited elements: {', '.join(design.forbidden_elements)}",
         (
-            "- Composition: hero slides occupy roughly 25%; content slides favor "
-            "asymmetric layouts with 55–60% imagery."
+            "- Composition: 12-column grid; analytical slides use native charts, "
+            "tables, and KPI tiles before generated imagery."
         ),
         "",
     ]

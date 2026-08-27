@@ -24,11 +24,17 @@ def analyze_references(
         str(Path(template_path).expanduser().resolve()) if template_path else None
     )
 
+    layout_families: list[str] = []
     if resolved_template:
-        template_colors, template_fonts = _template_tokens(Path(resolved_template))
+        template_colors, template_fonts, layout_families = _template_tokens(
+            Path(resolved_template)
+        )
         colors.update(template_colors)
         fonts.update(template_fonts)
         notes.append("Extracted colors, fonts, masters, and page dimensions from template")
+        notes.append(
+            "Reusable layout families: " + ", ".join(layout_families[:8] or ["blank"])
+        )
     for image_path in resolved_images:
         try:
             colors.update(_image_palette(Path(image_path)))
@@ -60,13 +66,15 @@ def analyze_references(
         title_font=title_font,
         body_font=body_font,
         notes=notes,
+        layout_families=layout_families,
     )
 
 
-def _template_tokens(path: Path) -> tuple[Counter[str], Counter[str]]:
+def _template_tokens(path: Path) -> tuple[Counter[str], Counter[str], list[str]]:
     presentation = Presentation(path)
     colors: Counter[str] = Counter()
     fonts: Counter[str] = Counter()
+    layout_families = [layout.name for layout in presentation.slide_layouts if layout.name]
     for slide in presentation.slides:
         for shape in slide.shapes:
             fill = getattr(shape, "fill", None)
@@ -86,7 +94,7 @@ def _template_tokens(path: Path) -> tuple[Counter[str], Counter[str]]:
                         fonts[run.font.name] += 1
                     if run.font.color.type == MSO_COLOR_TYPE.RGB:
                         colors[f"#{run.font.color.rgb}".upper()] += 1
-    return colors, fonts
+    return colors, fonts, layout_families
 
 
 def _image_palette(path: Path) -> Counter[str]:

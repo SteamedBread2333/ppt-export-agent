@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 
 from ppt_expert.config import AgentConfig
 from ppt_expert.models import ImageRequest
+from ppt_expert.telemetry import prompt_cache_key
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 StructuredCallable = Callable[[str, type[SchemaT]], SchemaT | dict[str, Any] | Awaitable[Any]]
@@ -29,14 +30,26 @@ class HostRuntime:
     model: Any | None = None
     structured_generate: StructuredCallable | None = None
     image_generate: ImageCallable | None = None
+    critique_images: Callable[..., Any] | None = None
+    cache: dict[str, Any] = field(default_factory=dict)
+    last_cache_hit: bool = False
 
     async def generate_structured(self, prompt: str, schema: type[SchemaT]) -> SchemaT:
+        cache_key = prompt_cache_key(prompt, schema.__name__)
+        cached = self.cache.get(cache_key)
+        if isinstance(cached, schema):
+            self.last_cache_hit = True
+            return cached
+        self.last_cache_hit = False
         current_prompt = prompt
         last_error: Exception | None = None
         for attempt in range(2):
             result = await self._invoke_structured(current_prompt, schema)
             try:
-                return self._coerce(result, schema)
+                parsed = self._coerce(result, schema)
+                self.cache[cache_key] = parsed
+                self.last_cache_hit = False
+                return parsed
             except (ValidationError, ValueError, TypeError) as exc:
                 last_error = exc
                 current_prompt = (

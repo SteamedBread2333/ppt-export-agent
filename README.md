@@ -24,8 +24,8 @@ revision, and delivery.
 
 - **Host-native intelligence** — reuses the model and image tools already owned by
   the calling application.
-- **Human-directed art direction** — pauses for explicit style or reference approval
-  with LangGraph human-in-the-loop interrupts.
+- **Human-directed art direction** — pauses for style, typography, and reference
+  approval with LangGraph human-in-the-loop interrupts.
 - **Template-aware generation** — extracts colors, fonts, masters, and layout
   relationships from an existing `.pptx`.
 - **Reference-driven styling** — derives a semantic palette from one or more images.
@@ -41,7 +41,7 @@ revision, and delivery.
 Brief / Outline / References
               │
               ▼
-       Parse & Structure
+     Parse · Brief · Evidence
               │
               ▼
    Inspect Template / Images ───────┐
@@ -50,10 +50,13 @@ Brief / Outline / References
       Human Style Approval          │
               │                     │
               ▼                     │
-       STORY + DESIGN               │
+     Typography Approval            │
               │                     │
               ▼                     │
-       Visual Asset Plan            │
+   STORY + DESIGN + Composition     │
+              │                     │
+              ▼                     │
+   Vector-first Visual Plan         │
               │                     │
               ▼                     │
       Host Image Generation         │
@@ -62,14 +65,15 @@ Brief / Outline / References
         PPTX Composition            │
               │                     │
               ▼                     │
-      Validate ── Repair Loop ◄─────┘
+ Validate ── Critique ── Repair ◄───┘
               │
               ▼
-     PPTX + Preview + Reports
+     Draft Approval + Reports
 ```
 
 `HostRuntime` is injected through LangGraph's `context_schema`. It is never
 serialized into a checkpoint; SQLite stores only portable workflow state.
+Optional `critique_images` lets the host visually review the contact sheet.
 
 ## Installation
 
@@ -100,8 +104,14 @@ async with create_ppt_agent(runtime, config) as agent:
         project_name="annual-business-review",
     )
 
-    # Display the preview paths to the user, then resume with their choice.
-    result = await agent.resume(pending["thread_id"], "B")
+    # Display the style previews, then resume with the chosen direction.
+    pending = await agent.resume(pending["thread_id"], "B")
+    # Approve a typography specimen. Modern Consulting is the default recommendation.
+    result = await agent.resume(
+        pending["thread_id"],
+        {"action": "use", "profile": "recommended"},
+    )
+    result = await agent.resume(result["thread_id"], {"action": "approve"})
     print(result["artifacts"]["pptx_path"])
 ```
 
@@ -128,6 +138,7 @@ async def generate_image_with_host(request, output_path):
 runtime = HostRuntime(
     structured_generate=generate_with_host,
     image_generate=generate_image_with_host,
+    critique_images=host_vision_tool,  # optional contact-sheet critic
 )
 ```
 
@@ -149,8 +160,9 @@ pending = await agent.start(
 )
 ```
 
-The graph pauses with a `reference_confirmation` interrupt. The host can submit one
-of three decisions:
+The graph pauses with a `reference_confirmation` interrupt. After `use` or
+`adjust`, it still pauses for typography approval. `ignore` returns to the
+standard four-style selection. The host can submit one of three decisions:
 
 ```python
 # Use the extracted direction as-is.

@@ -8,12 +8,14 @@ from pathlib import Path
 class AgentConfig:
     output_root: Path = field(default_factory=lambda: Path.cwd() / "outputs")
     checkpoint_path: Path = field(default_factory=lambda: Path.cwd() / ".ppt-expert.sqlite3")
-    max_repair_attempts: int = 2
+    max_repair_attempts: int = 3
     slide_width_inches: float = 13.333
     slide_height_inches: float = 7.5
     title_font: str = "PingFang SC"
     body_font: str = "PingFang SC"
     enable_libreoffice_preview: bool = True
+    quality_threshold: int = 90
+    dimension_floor: int = 82
 
     def ensure_directories(self) -> None:
         self.output_root.expanduser().resolve().mkdir(parents=True, exist_ok=True)

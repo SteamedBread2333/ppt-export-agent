@@ -1,580 +1,1504 @@
-# PowerPoint Production Agent Specification (Including Tool Implementations)
+# PPT Expert Agent — Production Specification v2
 
-> Purpose: Standardize the complete workflow from outline to finished PowerPoint as a reusable agent, preserving the original toolchain while explaining how to implement each tool across platforms.
-> Source: Validated through the 16-slide production project *A Tribute to Zhang Shiyao, an Outstanding Early-Childhood Educator* on 2026-08-26.
-> Revision: Added interface contracts and cross-platform implementation options for every tool on 2026-08-27.
-
----
-
-## 1. Agent Role
-
-You are a professional PowerPoint production agent. Starting from a user-provided topic or outline, you create a polished, visually rich `.pptx` presentation and synchronize its preview in real time.
-
-**Core principles**
-- Stay faithful to the user's outline: do not add or remove slides, titles, or key content; only refine the wording.
-- Visuals before text: create illustrations first, then arrange text around them.
-- Validate every step: validate immediately after writing instead of deferring errors until the end.
-- Preview on delivery: push the generated file to the user immediately.
+> Status: implemented v2 production system
+> Scope: LangGraph agent, native analytical rendering, HITL design gates, and
+> quality gates described below. Human pairwise preference (Section 21) remains
+> an operational evaluation outside this package.
+> Objective: produce presentations that equal or exceed expert-built consulting,
+> research, strategy, product, and narrative decks while remaining editable,
+> traceable, and reproducible.
 
 ---
 
-## 2. Workflow (Six Steps)
+## 1. Why v2 Is Necessary
 
-### Step 1: Receive the Outline and Create a Task List
+Using the same language model does not produce the same presentation quality. The
+decisive factor is the production system around the model: how it structures
+evidence, chooses a visual grammar, composes each slide, renders data, and evaluates
+the result.
 
-1. Parse the user's outline and determine the total slide count and section structure (for example, introduction / achievements / culmination).
-2. Create a TaskList with tasks at the following level of granularity:
-   - Confirm the visual style.
-   - Write the narrative and design documents.
-   - Create the presentation and open a preview.
-   - Produce each slide.
-   - Validate, fix, and deliver.
+### 1.1 Benchmark evidence
+
+Two nine-slide A-share strategy decks were inspected:
+
+- **Benchmark deck**: third-party agent output
+- **Current deck**: PPT Expert Agent output
+
+The benchmark contained:
+
+- 556 editable shapes, averaging 61.8 per slide
+- 242 text-bearing shapes
+- 3 native charts and 1 native table
+- 22 distinct font sizes from 7.5pt to 40pt
+- 8 distinct slide-position signatures across 9 slides
+- 3,154 explicit text characters
+- no raster pictures; the visual system was predominantly native vector content
+
+The current output contained:
+
+- 65 shapes, averaging 7.2 per slide
+- 37 text-bearing shapes
+- no native charts and no tables
+- only 8 distinct font sizes
+- 6 slide-position signatures across 9 slides
+- approximately 1,458 content characters
+- 80 numeric tokens that were rendered without a single native chart or table
+- 4 large raster images occupying approximately 310% of aggregate slide area
+- raster media accounting for approximately 98.6% of the package size
+- three uses of the same four-card geometry and two dense monolithic text slides
+
+Shape count is not itself a quality target. It reveals a deeper difference:
+the benchmark converted information into editable visual components, while the
+current agent compressed information into generic text blocks and decorative
+images.
+
+The benchmark is not structurally ideal and should not be copied blindly. Its master
+and four layouts are empty, most styling is applied directly, and all 556 objects are
+slide-local. The cover alone uses 205 line segments. More than 70% of its text is
+10.5pt or smaller. V2 must preserve its information-design quality while improving
+maintainability, semantic structure, and presentation-distance readability.
+
+### 1.2 Visible failure on the cover
+
+The benchmark cover separates:
+
+- research category and context
+- time horizon
+- decisive headline
+- supporting thesis
+- three KPI anchors
+- an editable market trajectory
+- disclaimer and authorship metadata
+
+The current cover combines most of this into a centered paragraph over a large
+image. It has weaker hierarchy, lower scanability, less usable whitespace, and no
+analytical information design.
+
+### 1.3 Typography finding
+
+Both reviewed decks use PingFang SC extensively, so the quality gap does not come
+from the family name alone. The benchmark pairs PingFang SC with Arial for numeric
+content and uses a much richer hierarchy from 7.5pt to 40pt. The current deck uses
+fewer levels and places long centered copy in shallow text boxes.
+
+V2 must improve both:
+
+- **font selection** — let the user approve a typography profile and choose a more
+  distinctive default stack
+- **typographic composition** — control script-specific fonts, numeric styling,
+  line length, weight, leading, alignment, and hierarchy
+
+### 1.4 Root causes
+
+1. **The old rule “visuals before text” was interpreted as “generate images.”**
+   Analytical decks need charts, diagrams, matrices, and KPI modules before they
+   need illustrations.
+2. **Six fixed layouts are too coarse.** They force unrelated content into the same
+   geometry.
+3. **STORY lacks evidence semantics.** It stores prose but not claims, metrics,
+   comparisons, sources, or the intended visual encoding.
+4. **DESIGN is a palette sheet, not a design system.** It lacks grid, component,
+   hierarchy, chart, table, and spacing rules.
+5. **Rendering is one-pass.** There is no rendered-slide critic that compares the
+   result against the design intent.
+6. **Validation checks correctness, not excellence.** A deck can pass while still
+   looking generic.
 
 ---
 
-### Step 2: Select a Style (User Confirmation Required)
+## 2. Product North Star
 
-**Process**: Produce four style preview cards -> user selects A/B/C/D -> lock the color palette.
+PPT Expert is not a “text-to-slides” utility. It is a presentation production
+system with five responsibilities:
 
-The original implementation combines two tools:
+1. **Editorial strategy** — determine the argument, sequence, and decision value.
+2. **Information design** — map claims and evidence to the right visual form.
+3. **Art direction** — create a coherent visual language and brand expression.
+4. **Composition** — build editable, slide-specific layouts with strong hierarchy.
+5. **Quality assurance** — render, inspect, score, repair, and deliver.
 
-#### Tool 1: `read_me(modules: ["mockup"])`
+The output must be:
 
-**What it is**: An internal context loader that prepares design specifications for visual rendering, including CSS variables, colors, typography, spacing, and corner radii.
+- useful in a real meeting
+- understandable in five seconds per slide
+- detailed enough for a reader who studies it
+- editable in PowerPoint
+- faithful to the user's evidence and outline
+- visually coherent without appearing template-generated
 
-**Interface contract**:
-```
-Input: modules: string[]  — Allowed values: "diagram" | "mockup" | "interactive" | "chart" | "art"
-Output: Design-specification context for the module (CSS variables, palette, font sizes, spacing, corner radii, and so on)
-Side effects: None (read-only; injects data into the agent context)
-When to call: Once before show_widget
-```
+### 2.1 Operating priority
 
-**Cross-platform implementation**:
+The production priority is:
 
-This is essentially a **design-token loader** and requires no runtime magic.
-
-```json
-// mockup_tokens.json — a constant configuration maintained by your team
-{
-  "mockup": {
-    "colors": {
-      "primary": "#E8603C",
-      "secondary": "#F5C24B",
-      "bg": "#FFF8F0",
-      "text": "#3D2B1F",
-      "muted": "#C4A484"
-    },
-    "typography": {
-      "title": { "fontFamily": "Songti SC, serif", "fontSize": "28px", "fontWeight": "700" },
-      "body": { "fontFamily": "PingFang SC, sans-serif", "fontSize": "16px", "fontWeight": "400" }
-    },
-    "spacing": { "padding": "24px", "gap": "16px", "margin": "12px" },
-    "radius": { "card": "12px", "button": "8px" },
-    "shadow": "0 4px 12px rgba(0,0,0,0.08)"
-  }
-}
+```text
+factual correctness
+→ narrative usefulness
+→ visual quality
+→ editability
+→ token efficiency
+→ latency
 ```
 
-**Implementation options by platform**:
-- **File system available**: Read a JSON file and inject it into the agent context.
-- **LLM-only agent**: Define these token constants directly in the system prompt.
-- **Backend service available**: Expose a `GET /design-tokens?module=mockup` endpoint that returns JSON.
-- **Lowest-cost option**: Remove this step and hard-code the tokens in DESIGN.md; the document should be the source of truth anyway.
+Latency is not a primary optimization target. The agent may spend additional time on
+planning, candidate generation, rendering, comparison, and repair when those steps
+materially improve quality.
 
-#### Tool 2: `show_widget(title, widget_code, loading_messages)`
+Token efficiency must never be achieved by skipping evidence analysis, design
+auditions, rendered review, or blocking validation. Savings must come from removing
+duplicate context and moving deterministic work out of the model.
 
-**What it is**: Renders visual content (SVG or HTML) inline in the conversation so the user can view it directly in chat.
+### 2.2 Deliberate quality mode
 
-**Interface contract**:
+The default production profile is `deliberate`:
+
+- plan globally before composing locally
+- generate competing directions for high-impact decisions
+- render before judging
+- use independent editorial and visual review passes
+- repair only the responsible layer
+- stop when measured quality converges, not after a fixed single pass
+
+The graph may use more wall-clock time, but every additional model call must have a
+distinct role, new evidence, or a measurable evaluation purpose.
+
+---
+
+## 3. Core Production Principles
+
+### 3.1 Meaning before decoration
+
+For every slide:
+
+```text
+decision purpose → claim → evidence → visual encoding → composition → styling
 ```
-Input:
-  title: string           — Visual-content title (also used as the download filename)
-  widget_code: string     — SVG or HTML fragment (without <html>/<head>/<body>/<DOCTYPE>; SVG begins with viewBox="0 0 680 ...")
-  loading_messages: string[] — Loading messages shown during rendering (1–4 messages, approximately 5 words each)
-Output: The user sees the rendered visual in the conversation
-Side effects: Renders visual content in the chat interface
-When to call: After read_me
+
+Never select a layout or generate an image before understanding what the slide must
+prove.
+
+### 3.2 Visual-first means information-first
+
+Use the visual form that best carries meaning:
+
+- time series → line or area chart
+- category comparison → bar or dot plot
+- composition → stacked bar, treemap, or allocation strip
+- scenarios → scenario matrix
+- process → flow or sequence diagram
+- hierarchy → tree or layered architecture
+- recommendation → decision cards or priority matrix
+- narrative/emotional moment → photography or illustration
+
+AI imagery is one visual primitive, not the default visual system.
+
+### 3.3 Vector-first, raster when justified
+
+Prefer native PowerPoint shapes, text, tables, and charts because they are:
+
+- editable
+- crisp at any resolution
+- brandable
+- accessible to downstream users
+- easier to validate
+
+Use raster imagery for covers, atmosphere, people, products, locations, or artwork
+that cannot be represented meaningfully as data or diagrams.
+
+### 3.4 One slide, one governing message
+
+Every slide must have one assertion-style headline. Supporting components may add
+depth, but they must reinforce the headline rather than introduce a second story.
+
+### 3.5 Consistency without repetition
+
+Reuse tokens and components, not complete page geometry. A high-quality deck should
+feel like one system with slide-specific compositions.
+
+### 3.6 Rendered output is the truth
+
+The `.pptx` object model is not sufficient evidence of quality. Every slide must be
+rendered to an image and visually inspected before delivery.
+
+### 3.7 Search before commitment
+
+Important design decisions should not depend on the model's first answer.
+
+Use bounded best-of-N search for:
+
+- narrative spine
+- cover concept
+- executive-summary architecture
+- the densest analytical slide
+- scenario or recommendation structure
+- closing synthesis
+
+Generate structurally different candidates, reject invalid options with deterministic
+rules, render the strongest finalists, and select by pairwise visual comparison.
+
+### 3.8 Spend computation where quality is uncertain
+
+Do not apply the same model budget to every slide. Allocate additional reasoning and
+critique to slides with:
+
+- high decision importance
+- dense or conflicting evidence
+- novel composition
+- complex charts or tables
+- weak critic confidence
+- repeated repair failures
+
+Stable footers, file conversion, geometry checks, color math, and format
+normalization require no language-model call.
+
+### 3.9 Preserve independent judgment
+
+The generator must not be the sole judge of its own work. Editorial review, visual
+review, data review, and final selection use separate prompts and isolated evidence
+views, even when the host provides only one underlying model.
+
+---
+
+## 4. Deck-Type Router
+
+The graph must classify the deck before planning visuals.
+
+### 4.1 Supported archetypes
+
+#### Strategy / research / consulting
+
+Default grammar:
+
+- assertion headlines
+- KPI strips
+- native charts
+- comparison tables
+- scenario matrices
+- allocation diagrams
+- source notes
+- restrained imagery
+
+#### Executive update / business review
+
+Default grammar:
+
+- scorecards
+- variance bridges
+- trends
+- operating drivers
+- risks and actions
+- owner and timing metadata
+
+#### Product / sales
+
+Default grammar:
+
+- customer problem
+- product proof
+- workflow diagrams
+- screenshots or product imagery
+- competitive differentiation
+- case-study metrics
+
+#### Training / education
+
+Default grammar:
+
+- concept framing
+- progressive disclosure
+- worked examples
+- diagrams
+- exercises and recap
+
+#### Brand / keynote / narrative
+
+Default grammar:
+
+- large-scale imagery
+- short copy
+- pacing and emotional contrast
+- cinematic hero moments
+- minimal analytical density
+
+### 4.2 Routing rule
+
+The archetype controls:
+
+- recommended slide families
+- information density
+- image-to-vector ratio
+- typography scale
+- chart frequency
+- annotation depth
+- expected source treatment
+
+The previous universal 55–60% image rule is removed.
+
+---
+
+## 5. LangGraph Production Workflow
+
+```text
+intake
+  → classify_deck
+  → parse_evidence
+  → build_narrative
+  → inspect_references
+  → propose_design_directions
+  → render_design_audition
+  → human_approve_direction
+  → plan_slides
+  → plan_visual_assets
+  → generate_assets
+  → compose_draft
+  → render_preview
+  → visual_critic
+  → repair
+  → validate
+  → human_accept_deck
+  → deliver
 ```
 
-**Cross-platform implementation**:
+### 5.1 Intake
 
-The core requirement is to **present SVG/HTML visual content to the user**. Choose an approach based on the platform's capabilities:
+Collect:
 
-| Platform Capability | Implementation | Code Example |
-|---------|---------|---------|
-| **Rich text/HTML rendering** (web chat, Slack, Lark, and similar platforms) | Send SVG/HTML directly as a rich-text message | Slack: use a Block Kit `image` or `section`; Lark: use an interactive card |
-| **Images only** (WeChat, QQ, DingTalk, and similar platforms) | Convert SVG to PNG, then send it | `cairosvg svg_str → png_bytes` or `subprocess: rsvg-convert -w 800 input.svg -o output.png` |
-| **Files only** | Save as an .svg/.html file and send a download link | `with open("preview.svg","w") as f: f.write(svg_code)` -> send the file |
-| **Text only** | Fall back to a plain-text description | Describe four options and ask the user to reply with A/B/C/D |
-| **Browser engine available** | Convert HTML to a screenshot and send the image | Playwright/PuppetShot: `page.set_content(html)` -> `page.screenshot()` |
+- topic and objective
+- audience and decision context
+- presentation duration
+- outline or source material
+- required slide count
+- brand/template files
+- reference images or decks
+- output language
+- typography preference or approved corporate fonts
+- data sensitivity
+- delivery constraints
 
-**Minimal SVG-to-PNG implementation (Python)**:
+If audience, objective, or decision context is missing, pause with a focused
+human-in-the-loop question.
+
+### 5.2 Classify the deck
+
+Produce:
+
+- primary archetype
+- optional secondary archetype
+- information-density target
+- expected visual forms
+- tone and risk level
+
+### 5.3 Parse evidence
+
+Extract and normalize:
+
+- claims
+- facts
+- metrics and units
+- time periods
+- comparisons
+- scenarios
+- recommendations
+- risks
+- sources
+- confidence or uncertainty
+
+Never invent a chart from prose unless the underlying values are explicit. If data
+is unavailable, use a qualitative diagram and label it accordingly.
+
+### 5.4 Build the narrative
+
+Create a narrative spine:
+
+```text
+context → tension → evidence → interpretation → choice → action → risk
+```
+
+Each slide must define:
+
+- role in the argument
+- governing message
+- required evidence
+- transition from the previous slide
+- intended audience takeaway
+
+### 5.5 Inspect references
+
+For templates:
+
+- extract slide size, theme, masters, layouts, fonts, colors, and components
+- identify reusable layout families
+- distinguish brand rules from sample-slide content
+- generate a contact sheet of representative slides
+
+For images:
+
+- extract palette, contrast, texture, geometry, visual weight, and mood
+- detect whether the reference is suitable for a full deck or only a cover
+- never reduce image analysis to dominant colors alone
+
+### 5.6 Design audition
+
+Do not ask the user to approve abstract palette cards only.
+
+Render three representative slides for each candidate direction:
+
+1. cover
+2. analytical or content-dense slide
+3. conclusion or recommendation slide
+
+Each direction also includes a typography specimen rendered with real deck content:
+
+- display headline
+- assertion headline
+- body paragraph
+- labels and footnotes
+- KPI numerals, percentages, and ranges
+- mixed Chinese/Latin text when applicable
+
+The user approves both the visual direction and typography profile after seeing them
+applied to real content. The user may select a recommended profile, inherit the
+linked template, or provide a custom installed font.
+
+### 5.7 Plan slides
+
+Generate a structured `SlideSpec` for every slide before rendering.
+
+### 5.8 Compose the draft
+
+Use a two-pass renderer:
+
+1. **Structure pass** — grid, zones, components, charts, tables, and hierarchy
+2. **Polish pass** — alignment, spacing, annotations, emphasis, and decorative detail
+
+### 5.9 Render and critique
+
+Render every slide to PNG, build a contact sheet, and evaluate both individual
+slides and the entire deck.
+
+### 5.10 Repair loop
+
+Repair at the smallest responsible level:
+
+- token issue → adjust design token
+- component issue → adjust component
+- slide issue → recompose one slide
+- rhythm issue → reorder or vary a slide family
+- narrative issue → return to narrative planning
+
+Maximum automatic repair passes: three. Escalate unresolved trade-offs to the user.
+
+### 5.11 Final human acceptance
+
+Before delivery, show:
+
+- contact sheet
+- validation summary
+- remaining warnings
+- final file paths
+
+Allow the user to approve, request targeted changes, or select slides for revision.
+
+### 5.12 Candidate-search policy
+
+Use three search depths:
+
+#### Global decisions
+
+Generate three to five candidates for narrative architecture and design direction.
+Select through rubric scoring plus pairwise comparison.
+
+#### Key slides
+
+Generate two to four compositions for the cover, executive summary, densest
+analytical slide, recommendation, and conclusion. Render finalists before selection.
+
+#### Routine slides
+
+Generate one semantic plan and one fallback family. Expand search only when
+deterministic checks or the critic report low confidence.
+
+Candidate diversity must be structural. Color-only or wording-only variations do
+not count as independent candidates.
+
+### 5.13 Token-efficient orchestration
+
+Quality-preserving token controls:
+
+1. **Canonical state** — store structured facts once and reference stable IDs instead
+   of repeating source documents in every prompt.
+2. **Hierarchical context** — retain a deck summary, section summaries, and
+   slide-local evidence packets. Give each node only the smallest lossless packet it
+   needs.
+3. **Content-addressed cache** — cache model results by prompt version, schema,
+   evidence IDs, design-system hash, and model identity.
+4. **Delta repair** — send the current slide specification, rendered crop, and issue
+   list; never resend the entire deck for a local defect.
+5. **Batch compatible work** — plan similar routine slides together, while keeping
+   high-risk slides independent.
+6. **Deterministic preflight** — use code for statistics, chart suitability,
+   geometry, contrast, font checks, image normalization, and file validation.
+7. **Progressive visual review** — review a contact sheet first; send full-resolution
+   slide images only for flagged or high-impact slides.
+8. **Stable prompt prefixes** — keep system and rubric prefixes identical so host
+   providers can reuse prompt caches.
+9. **No transcript replay** — persist approved structured artifacts and concise
+   decision rationales instead of complete reasoning histories.
+10. **Budget telemetry** — record input tokens, output tokens, cache hits, retries,
+    quality gain, and elapsed time for every model call.
+
+Token budgets are soft ceilings. A node may exceed its budget when a blocking
+quality issue remains, but it must record the reason and expected quality gain.
+
+### 5.14 Convergence and stopping
+
+Continue repair only when the expected quality gain justifies another pass.
+
+Stop when all conditions hold:
+
+- no blocking issue remains
+- quality threshold is met
+- two consecutive passes improve the overall score by less than two points
+- the latest pass introduces no regression
+- human approval has been obtained
+
+Escalate instead of looping when two repairs fail for the same root cause.
+
+---
+
+## 6. Human-in-the-Loop Gates
+
+### Gate A: brief confirmation
+
+Trigger when objective, audience, or scope is materially ambiguous.
+
+### Gate B: reference interpretation
+
+Show extracted template and image characteristics. Actions:
+
+- use
+- adjust
+- ignore
+
+### Gate C: design audition
+
+Show real-content sample slides rather than palette-only cards. Actions:
+
+- approve direction
+- choose or change typography profile
+- inherit typography from the linked template
+- provide a custom font
+- merge selected traits
+- request another direction
+
+### Gate D: draft review
+
+Show a full-deck contact sheet and quality score. Actions:
+
+- approve
+- revise selected slides
+- revise global system
+
+### Gate E: final acceptance
+
+Confirm delivery after all blocking checks pass.
+
+All gates use LangGraph `interrupt()` and resume with the same `thread_id`.
+
+---
+
+## 7. Data Contracts
+
+### 7.1 `DeckBrief`
+
+```yaml
+objective: string
+audience: string
+decision_context: string
+duration_minutes: integer
+language: string
+slide_count: integer
+primary_archetype: enum
+secondary_archetype: enum | null
+density: low | medium | high
+brand_constraints: object
+reference_files: list[path]
+```
+
+### 7.2 `EvidenceItem`
+
+```yaml
+id: string
+kind: claim | metric | quote | event | recommendation | risk
+statement: string
+value: number | null
+unit: string | null
+period: string | null
+comparison: object | null
+source: string | null
+confidence: confirmed | estimated | illustrative
+```
+
+### 7.3 `SlideSpec`
+
+```yaml
+number: integer
+section: string
+purpose: string
+headline: string
+takeaway: string
+evidence_ids: list[string]
+slide_family: enum
+visual_form: enum
+composition: object
+components: list[ComponentSpec]
+chart: ChartSpec | null
+table: TableSpec | null
+artwork: ArtworkSpec | null
+annotations: list[string]
+source_note: string | null
+density_budget: object
+transition: string
+```
+
+### 7.4 `DesignSystem`
+
+```yaml
+canvas:
+  ratio: 16:9
+  safe_margin: number
+grid:
+  columns: 12
+  gutter: number
+  baseline: number
+typography:
+  display: FontToken
+  headline: FontToken
+  subhead: FontToken
+  body: FontToken
+  label: FontToken
+  footnote: FontToken
+palette:
+  canvas: color
+  surface: color
+  primary_text: color
+  secondary_text: color
+  accent: color
+  positive: color
+  negative: color
+  warning: color
+chart_theme: object
+table_theme: object
+components: object
+image_treatment: object
+```
+
+### 7.5 `TypographyProfile`
+
+```yaml
+id: string
+name: string
+source: recommended | template | custom
+language: string
+display:
+  latin_family: string
+  east_asian_family: string
+  fallbacks: list[string]
+headline:
+  latin_family: string
+  east_asian_family: string
+  fallbacks: list[string]
+body:
+  latin_family: string
+  east_asian_family: string
+  fallbacks: list[string]
+numeric:
+  family: string
+  tabular_figures: boolean
+scale:
+  display: number
+  headline: number
+  component_title: number
+  body: number
+  label: number
+  footnote: number
+weights: object
+line_heights: object
+installed: boolean
+glyph_coverage_valid: boolean
+user_approved: boolean
+```
+
+### 7.6 `QualityReport`
+
+```yaml
+score: 0..100
+blocking_issues: list[Issue]
+warnings: list[Issue]
+slide_scores: list[SlideQuality]
+dimensions:
+  narrative: 0..100
+  evidence: 0..100
+  hierarchy: 0..100
+  composition: 0..100
+  typography: 0..100
+  data_visualization: 0..100
+  consistency: 0..100
+  editability: 0..100
+  accessibility: 0..100
+```
+
+### 7.7 `ExecutionMetrics`
+
+```yaml
+run_id: string
+node: string
+purpose: string
+model_identity: string
+prompt_version: string
+input_tokens: integer
+output_tokens: integer
+cached_tokens: integer
+cache_hit: boolean
+latency_ms: integer
+retry_count: integer
+quality_before: number | null
+quality_after: number | null
+artifact_hashes: list[string]
+```
+
+Use these metrics to optimize duplicate work and context size. Never rank a cheaper
+run above a higher-quality run solely because it used fewer tokens.
+
+---
+
+## 8. Slide-Family System
+
+Replace six rigid layouts with composable slide families.
+
+### 8.1 Foundation families
+
+- title / cover
+- section divider
+- executive summary
+- assertion + evidence
+- conclusion / call to action
+- appendix
+
+### 8.2 Analytical families
+
+- KPI strip + trend
+- chart + interpretation rail
+- dual-chart comparison
+- chart + driver cards
+- valuation or benchmark table
+- scenario matrix
+- allocation bar or portfolio map
+- risk heatmap
+- waterfall / bridge
+- timeline with milestones
+
+### 8.3 Strategic families
+
+- strategic pillars
+- option comparison
+- priority matrix
+- recommendation stack
+- operating model
+- capability architecture
+- roadmap
+
+### 8.4 Narrative families
+
+- full-bleed hero
+- image + assertion
+- quote or testimony
+- before / after
+- visual sequence
+
+### 8.5 Composition rules
+
+- use a 12-column grid
+- align all major edges to grid lines
+- define safe zones and minimum gutters
+- cap the number of focal regions
+- reserve whitespace intentionally
+- vary composition across adjacent slides
+- keep recurring navigation and footer elements stable
+
+The renderer chooses and parameterizes a family from slide semantics. It does not
+select layouts by cycling through a fixed list.
+
+---
+
+## 9. Native Data-Visualization Engine
+
+Analytical decks require a first-class chart and table system.
+
+### 9.1 Required chart forms
+
+- line and area
+- grouped and stacked bar
+- dot plot
+- waterfall
+- allocation strip
+- slope chart
+- range plot
+- scatter and quadrant
+- heatmap
+- small multiples
+
+### 9.2 Chart design rules
+
+- lead with the insight, not the chart type
+- label decisive values directly
+- remove unnecessary borders, legends, and gridlines
+- use accent color only for the series that proves the headline
+- annotate inflection points and thresholds
+- preserve units and periods
+- include source and confidence status
+- avoid 3D charts
+- avoid pie charts when comparison precision matters
+
+### 9.3 Table design rules
+
+- use tables for lookup and precise comparison, not decoration
+- align numbers by decimal position where practical
+- apply semantic color sparingly
+- highlight one governing row or column
+- separate labels, values, deltas, and notes
+- keep the table editable
+
+### 9.4 Diagram rules
+
+Build diagrams from semantic nodes and edges. Use:
+
+- consistent node roles
+- directional flow
+- meaningful grouping
+- no crossing connectors when a reroute is possible
+- a limited hierarchy depth
+
+---
+
+## 10. Component Library
+
+Create reusable native PowerPoint components:
+
+- eyebrow / section label
+- assertion headline
+- subtitle
+- KPI tile
+- metric delta
+- insight callout
+- interpretation rail
+- source note
+- page index
+- legend
+- recommendation card
+- risk badge
+- scenario card
+- allocation segment
+- chart annotation
+
+Each component defines:
+
+- semantic role
+- minimum and maximum dimensions
+- padding
+- typography token
+- allowed color roles
+- overflow behavior
+- alignment anchors
+
+Components must remain editable and must not be flattened into images.
+
+---
+
+## 11. Typography and Information Hierarchy
+
+### 11.1 Required hierarchy
+
+Use at least five functional levels where the deck requires them:
+
+1. display
+2. assertion headline
+3. component title
+4. body or value
+5. label / source / footnote
+
+### 11.2 Rules
+
+- use assertion headlines for analytical slides
+- limit line length and avoid centered paragraphs
+- never use shrink-to-fit as the primary layout strategy
+- recompute composition before reducing body type
+- preserve a minimum readable body size
+- use tabular numerals for KPI-heavy decks when available
+- use font weight and spacing before introducing additional colors
+
+### 11.3 Language-aware typography
+
+Select font families and line-height rules based on output language. Validate the
+actual fonts on the target system and define explicit fallbacks.
+
+### 11.4 Human typography selection
+
+Typography is a human-in-the-loop decision, not a hidden configuration default.
+
+Before full production, render three typography specimens with the user's actual
+headline, body copy, metrics, percentages, and mixed-language content. Offer:
+
+1. **Modern Consulting** — neutral, precise, high-density, strong numerals
+2. **Editorial Authority** — serif-led headlines with restrained sans-serif body
+3. **Executive Technology** — geometric display type with a highly legible body
+4. **Template / Brand** — typography inherited from the approved source
+5. **Custom** — an installed family or user-supplied font package
+
+The chosen profile is persisted in `DesignSystem` and requires explicit approval.
+
+### 11.5 Recommended default stacks
+
+The default is selected dynamically from fonts that are actually available. The
+preferred high-quality multilingual stack is:
+
+```text
+Latin display and numerals:
+Inter → Aptos Display → Avenir Next → Arial
+
+Chinese display and headlines:
+Source Han Sans SC → Noto Sans CJK SC → HarmonyOS Sans SC
+→ MiSans → PingFang SC → Microsoft YaHei
+
+Chinese body:
+Source Han Sans SC → Noto Sans CJK SC → PingFang SC
+→ Microsoft YaHei → SimHei
+
+Editorial Chinese headlines:
+Source Han Serif SC → Noto Serif CJK SC → Songti SC → SimSun
+```
+
+`Modern Consulting` is the default recommendation when Inter plus Source Han Sans
+SC or Noto Sans CJK SC are installed. Otherwise:
+
+- macOS defaults to Avenir Next for Latin/numerals and PingFang SC for Chinese
+- Windows defaults to Aptos/Aptos Display for Latin/numerals and Microsoft YaHei
+  for Chinese
+- Linux defaults to Inter and Noto Sans CJK SC
+
+Do not claim a font is active merely because it appears in the fallback chain.
+
+### 11.6 Script-specific font application
+
+PowerPoint text runs must set script-specific typefaces:
+
+- `a:latin` for Latin characters
+- `a:ea` for East Asian characters
+- `a:cs` for complex scripts where required
+
+Use a dedicated numeric family only when its glyph metrics and license are valid.
+Apply tabular figures to KPI tiles, tables, and axes when available.
+
+### 11.7 Font validation and packaging
+
+Before rendering:
+
+- scan installed font files and PostScript names
+- validate glyph coverage for every character used in the deck
+- validate required weights, not only the family name
+- verify that numeric and Chinese baselines align
+- reject synthetic bold or italic
+- compare line wrapping in the final rendering environment
+
+Never silently substitute a missing font. Pause for user approval when the chosen
+profile is unavailable.
+
+Open-licensed fonts may be offered as an optional project font pack, but the agent
+must record license metadata and must not redistribute restricted corporate or
+system fonts.
+
+### 11.8 Typographic composition
+
+Font family selection cannot compensate for weak composition:
+
+- use mixed alignment intentionally; reserve centered text for short ceremonial copy
+- keep analytical headlines left-aligned by default
+- use display faces sparingly
+- separate headline, evidence, interpretation, and source through scale and spacing
+- keep KPI numerals visually distinct from their labels
+- tune Chinese leading and paragraph spacing independently from Latin defaults
+- prohibit long paragraphs inside shallow hero text boxes
+
+---
+
+## 12. Image and Artwork Pipeline
+
+### 12.1 When to use imagery
+
+Use imagery when it contributes:
+
+- emotion
+- place
+- people
+- product context
+- atmosphere
+- metaphor
+
+Do not use imagery merely to fill empty space on an analytical slide.
+
+### 12.2 Prompt contract
+
+Every prompt includes:
+
+- purpose in the slide
+- composition and focal placement
+- camera or perspective
+- palette and lighting
+- style consistency token
+- negative space requirement
+- prohibited text, logos, signatures, and watermarks
+- treatment of identifiable people
+
+### 12.3 Technical normalization
+
+The asset layer must:
+
+- detect actual file format from bytes
+- discover `.jpg`, `.jpeg`, or `.webp` siblings when `.png` was requested
+- normalize final assets to real PNG files
+- preserve alpha when present
+- crop with focal awareness
+- record provenance and prompt hash
+
+---
+
+## 13. Template and Reference Intelligence
+
+### 13.1 Template reuse
+
+Do not merely copy template colors.
+
+Extract:
+
+- slide masters and layouts
+- recurring component geometry
+- typography roles
+- spacing rhythm
+- shape treatments
+- chart and table themes
+- background systems
+- page furniture
+
+Map generated `SlideSpec` objects to the closest reusable template family. Create a
+new layout only when no suitable family exists.
+
+### 13.2 Reference-deck analysis
+
+When a reference deck is provided:
+
+- render all slides
+- build a contact sheet
+- cluster slide families
+- infer grid and margins
+- infer typography hierarchy
+- measure image/vector/chart ratios
+- identify repeated components
+- distinguish brand language from topic-specific content
+
+### 13.3 Image-reference analysis
+
+Analyze:
+
+- semantic mood
+- geometry
+- dominant and supporting colors
+- contrast
+- texture
+- visual density
+- focal position
+- suitable usage scope
+
+Palette extraction alone is insufficient.
+
+---
+
+## 14. Rendering Architecture
+
+### 14.1 Constraint-based layout
+
+Each component declares preferred, minimum, and maximum bounds. The layout engine
+solves:
+
+- grid placement
+- alignment
+- spacing
+- collision avoidance
+- hierarchy
+- aspect-ratio preservation
+- text fit
+
+If content does not fit:
+
+1. shorten non-essential copy
+2. change component arrangement
+3. switch to a more suitable slide family
+4. split the slide with user approval
+5. reduce type only within safe limits
+
+### 14.2 Layering
+
+Use a stable layer order:
+
+```text
+background
+→ structural surfaces
+→ data and diagrams
+→ imagery
+→ annotations
+→ text
+→ navigation and source notes
+```
+
+### 14.3 Editability
+
+Charts, tables, labels, and diagrams should remain native PowerPoint objects wherever
+the library permits. Rasterize only elements that cannot be represented reliably.
+
+---
+
+## 15. Visual Critic
+
+The host model must critique rendered slide images, not only JSON state.
+
+### 15.1 Slide-level review
+
+Evaluate:
+
+- five-second comprehension
+- message prominence
+- visual evidence
+- alignment
+- whitespace
+- contrast
+- text density
+- chart legibility
+- balance
+- obvious template repetition
+- rendering defects
+
+### 15.2 Deck-level review
+
+Evaluate the contact sheet for:
+
+- narrative pacing
+- section transitions
+- visual rhythm
+- density variation
+- overused slide families
+- color consistency
+- repeated hero treatments
+- weak opening or ending
+
+### 15.3 Critic output
+
+Every issue must include:
+
+- slide number
+- severity
+- observed problem
+- probable cause
+- recommended repair scope
+- measurable acceptance condition
+
+Vague feedback such as “make it more professional” is invalid.
+
+### 15.4 Independent review panel
+
+Run four isolated reviews:
+
+1. **Executive editor** — tests message clarity, decision value, and narrative.
+2. **Information designer** — tests whether evidence uses the correct visual form.
+3. **Art director** — tests hierarchy, composition, rhythm, and brand coherence.
+4. **Production engineer** — tests editability, semantics, rendering, and file health.
+
+Each reviewer sees only the evidence required for its role and scores independently.
+The final quality score uses the conservative aggregate, not the generator's own
+score.
+
+Any disagreement greater than 15 points triggers a focused adjudication pass.
+
+### 15.5 Pairwise selection
+
+Absolute scoring is often unstable. When two valid candidates remain, show them
+side-by-side with identical content and ask:
+
+- which communicates the governing message faster?
+- which makes the evidence easier to verify?
+- which has stronger hierarchy and less decoration?
+- which remains more editable and reusable?
+
+Record the winning candidate and a short decision rationale for future retrieval.
+
+### 15.6 Adversarial review
+
+Before final acceptance, run a red-team pass that searches specifically for:
+
+- unsupported claims
+- misleading chart scales
+- decorative visuals masquerading as evidence
+- inconsistent numbers across slides
+- weak assumptions hidden in footnotes
+- accessibility failures
+- generic AI patterns
+- technically valid but visually poor layouts
+
+The red-team pass can block delivery.
+
+---
+
+## 16. Validation and Quality Gates
+
+### 16.1 Structural validation
+
+- slide count and order
+- title and fact fidelity
+- source completeness
+- file integrity
+- valid image assets
+- no out-of-bounds elements
+- no unintended overlaps
+- valid theme colors and fonts
+- semantic PowerPoint bullets instead of literal bullet glyphs
+- accurate presentation metadata, slide dimensions, timestamps, and authorship
+- meaningful alt text for images, charts, and diagrams
+- valid notes, hyperlinks, and embedded-workbook relationships
+
+### 16.2 Visual validation
+
+- rendered text is not clipped
+- minimum type sizes are respected
+- the approved typography profile is applied without silent substitution
+- East Asian, Latin, and numeric runs use the intended script-specific families
+- required glyphs and font weights are available
+- contrast meets accessibility targets
+- chart labels remain legible
+- grid edges align within tolerance
+- spacing tokens are respected
+- no stretched or low-resolution images
+- no visible watermarks
+- typography remains readable at the declared viewing distance
+- repeated component groups are centered and aligned to the global grid
+
+### 16.3 Editorial validation
+
+- every slide has one governing message
+- every claim has evidence or an explicit confidence label
+- no unsupported precision
+- no duplicate slide purpose
+- conclusions follow from evidence
+
+### 16.4 Acceptance threshold
+
+Delivery requires:
+
+- no blocking issue
+- overall quality score of at least 90 in deliberate mode
+- no quality dimension below 82
+- evidence, editability, and rendered-visual checks completed independently
+- no unresolved red-team finding
+- no regression against the current golden benchmark
+- explicit human acceptance
+
+An 85–89 score may be shown as a reviewable draft but must not be labeled final.
+
+---
+
+## 17. Benchmark-Specific Acceptance Test
+
+For a nine-slide strategy deck comparable to the reviewed benchmark:
+
+- cover includes headline, thesis, KPI anchors, context, and disclaimer
+- user-approved typography creates distinct headline, body, label, and numeric roles
+- executive summary converts conclusions into structured modules
+- at least three evidence slides use native charts when source values exist
+- quantitative comparisons are visually encoded rather than left as numeric prose
+- valuation or benchmark comparison uses an editable table or equivalent precise
+  comparison component
+- scenario analysis uses a matrix, not a bullet list
+- allocation is shown as an editable visual structure
+- every analytical slide includes interpretation, not only data
+- source notes and confidence labels are visible
+- no analytical slide uses a decorative full-bleed image as its primary evidence
+- adjacent slides do not repeat identical geometry
+- recurring components use semantic grouping, masters, or reusable builders rather
+  than hundreds of individually maintained decorative objects
+- bullets, notes, alt text, and document metadata use native PowerPoint semantics
+- all slides pass rendered-image review
+
+The benchmark should be exceeded through:
+
+- stronger source traceability
+- more reliable editability
+- explicit uncertainty handling
+- brand/template intelligence
+- targeted human control
+- reproducible generation and repair
+
+---
+
+## 18. Host Runtime Contract
+
+The agent reuses the calling host's capabilities.
+
+### 18.1 Structured generation
+
+The host supplies:
+
 ```python
-import cairosvg
-png_bytes = cairosvg.svg2png(url="preview.svg", output_width=800, output_height=600)
-# Alternatively, use the CLI: rsvg-convert -w 800 preview.svg -o preview.png
+generate_structured(prompt, schema) -> BaseModel | dict | JSON
 ```
 
-**Minimal HTML-to-screenshot implementation (Node.js)**:
-```javascript
-const { chromium } = require('playwright');
-const browser = await chromium.launch();
-const page = await browser.newPage();
-await page.setViewportSize({ width: 680, height: 400 });
-await page.setContent(htmlCode);
-await page.screenshot({ path: 'preview.png' });
-await browser.close();
+### 18.2 Image generation
+
+The host optionally supplies:
+
+```python
+generate_image(request, output_path) -> bytes | path | None
 ```
 
-> **Summary**: `read_me` + `show_widget` essentially means **load design constants + render SVG/HTML for the user**. Hard-coded values can replace the former; implement the latter through the rendering channel best suited to the platform.
+### 18.3 Vision critique
+
+The host should supply a multimodal capability:
+
+```python
+critique_images(prompt, image_paths, schema) -> QualityReport
+```
+
+If the host lacks vision support, the agent performs structural validation and must
+surface the missing visual-review capability as a delivery warning.
 
 ---
 
-### Step 3: Write the Source Documents
+## 19. LangGraph State and Routing
 
-Write two documents in the project directory:
+### 19.1 State
 
-**STORY.md — Narrative contract**
-```
-One record per slide, containing:
-- Slide number
-- Title
-- Key content (faithful to the user's outline, with wording refinements only)
-- Image assignment (which image appears on this slide)
-- Layout type (full-bleed hero / image left, text right / image above, text below / text only / data cards)
-```
+The checkpointed state contains only JSON-serializable data:
 
-**DESIGN.md — Strict visual constraints**
-```
-- Palette: primary / secondary / body-text / background / accent colors (all as hex values)
-- Typography: title font family + body font family (include fallback chains: preferred -> fallback -> system default)
-- Font sizes: main title / subtitle / body / annotation (in pt)
-- Layout rules: ratio of hero slides to content slides, asymmetry principles, and whitespace ratio
-- Image rules: illustration style, color tone, treatment of people (rear view/profile), and prohibited elements
-```
+- brief
+- archetype
+- evidence
+- narrative
+- reference analysis
+- approved design system
+- slide specifications
+- asset plan and paths
+- rendered preview paths
+- quality reports
+- repair history
+- execution metrics and cache references
+- artifacts
 
-**Implementation**: Use file-writing capabilities (`Write` / `open().write()` / `fs.writeFileSync`). If no file system is available, store the documents in internal agent variables.
+Host clients and tools remain in runtime context and are never checkpointed.
+
+### 19.2 Conditional routes
+
+```text
+missing brief data → interrupt
+reference supplied → inspect → interrupt
+direction not approved → redesign
+asset failure → retry → fallback
+structural failure → targeted repair
+visual score below threshold → visual repair
+narrative failure → narrative replan
+quality passed → final human acceptance
+```
 
 ---
 
-### Step 4: Create the Presentation and Enable Live Preview
+## 20. Implementation Roadmap
 
-#### Tool 3: `slidep-start --project <path> --filename <name>.pptx`
+Construction must proceed in this order.
 
-**What it is**: Creates a `.pptx` file and starts a live compilation service that monitors slide-file changes, recompiles automatically, and pushes preview updates.
+### Phase 0: evaluation and observability
 
-**Interface contract**:
-```
-Input:
-  --project: string    — Absolute path to the project root
-  --filename: string   — Output .pptx filename
-Output:
-  1. Creates an empty .pptx file
-  2. Starts a watcher service (monitors the slides/ directory and recompiles automatically when files change)
-  3. Returns a preview URL (for present_files to open)
-Side effects: Writes to the file system and starts a background service
-```
+- establish benchmark prompts, golden contact sheets, and human preference records
+- add per-node latency, token, cache, retry, and quality-gain telemetry
+- version prompts, schemas, design systems, and critic rubrics
+- make every later phase measurable before expanding capability
 
-**Cross-platform implementation**:
+### Phase 1: semantic planning
 
-Split this into two independent capabilities: **create the PowerPoint file** + **provide a live preview**.
+- add `DeckBrief`, `EvidenceItem`, `SlideSpec`, `DesignSystem`, and `QualityReport`
+- add deck-type classification
+- replace prose-only STORY generation with claim/evidence/visual-form planning
 
-**1. Create the PowerPoint file**
+### Phase 2: visual system
 
-| Option | Tool/Library | Code Example |
-|------|---------|---------|
-| **python-pptx** (recommended) | `pip install python-pptx` | See below |
-| HTML -> PPTX | Write HTML first, then convert it with LibreOffice | `libreoffice --headless --convert-to pptx input.html` |
-| Commercial API | iSlide / Aspose Slides | REST API call |
-| HTML-only slides | reveal.js / impress.js | Output HTML and present it in a browser |
+- implement 12-column grid and spacing tokens
+- implement installed-font discovery, glyph coverage, and script-specific font runs
+- add typography profiles, rendered specimens, and a human approval interrupt
+- build native component library
+- replace rigid layout cycling with semantic slide-family routing
 
-**Minimal python-pptx implementation**:
-```python
-from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
+### Phase 3: analytical graphics
 
-prs = Presentation()
-prs.slide_width = Inches(13.333)  # 16:9 widescreen
-prs.slide_height = Inches(7.5)
+- implement native chart theme and chart builders
+- implement editable tables, scenario matrices, allocation visuals, and risk maps
 
-# Add a blank slide
-blank_layout = prs.slide_layouts[6]  # Blank layout
-slide = prs.slides.add_slide(blank_layout)
+### Phase 4: design audition
 
-prs.save("output.pptx")
-```
+- render real-content sample slides before approval
+- add design-direction merge and revision actions
+- add bounded best-of-N composition search for key slides
+- add deterministic pruning and pairwise finalist selection
 
-**2. Live preview (optional, nice to have)**
+### Phase 5: rendered visual QA
 
-A live preview is not required, but it significantly improves the experience. Implementation options:
+- render every slide to PNG
+- build contact sheets
+- add independent editorial, information-design, art-direction, and production critics
+- add pairwise comparison and adversarial red-team review
+- implement targeted repair routing
 
-```python
-# Option A: File watching + automatic rebuild (Python watchdog)
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+### Phase 6: template intelligence
 
-class SlideHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        if event.src_path.endswith('.slide') or event.src_path.endswith('.py'):
-            rebuild_pptx()  # Recompile
+- infer reusable template components and slide families
+- map slide specifications to existing masters and layouts
 
-observer = Observer()
-observer.schedule(SlideHandler(), path="./slides", recursive=True)
-observer.start()
-# Block the main thread while a child thread monitors file changes
-```
+### Phase 7: benchmark harness
 
-```javascript
-// Option B: Push preview updates over WebSocket (Node.js)
-const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 8080 });
-const chokidar = require('chokidar');
-chokidar.watch('./slides/').on('change', () => {
-  rebuildPptx(); // Rebuild
-  wss.clients.forEach(client => client.send('reload')); // Tell the frontend to refresh
-});
-```
+- store representative benchmark tasks
+- score structure, editability, visual quality, and narrative performance
+- prevent regressions with golden contact sheets and measurable thresholds
 
-```bash
-# Option C: Simplest approach—use the entr or fswatch command-line tool
-ls slides/*.slide | entr -r python build_pptx.py
-```
+### Phase 8: token-efficient production
 
-> **Summary**: `slidep-start` = **create a file with python-pptx** + **watch files and rebuild automatically**. The former is essential; the latter is an enhancement. The minimum implementation requires only `prs.save()`.
+- add canonical evidence IDs and hierarchical context packets
+- add content-addressed model and render caches
+- add slide-local delta repair
+- add contact-sheet-first progressive visual review
+- enforce token telemetry and quality-per-token regression tests
 
 ---
 
-### Step 5: Generate AI Images (Visuals Before Text)
+## 21. Definition of Done
 
-#### Tool 4: `ImageGen`
+The v2 agent is complete only when:
 
-**What it is**: An AI text-to-image tool that generates PNG files from prompts.
-
-**Interface contract**:
-```
-Input:
-  prompt: string        — Image-generation prompt
-  size: string          — Image dimensions, such as "1536x1024" (landscape) / "1024x1024" (square)
-  quality: string       — "high" | "standard"
-  background: string    — "opaque" | "transparent"
-  output_dir: string    — Output directory path
-  style: string         — Optional visual-style description
-Output: Saves a PNG file to output_dir
-Side effects: Writes to the file system
-```
-
-**Cross-platform implementation**:
-
-Choose any available API. The interface pattern is consistent: **prompt -> API call -> image bytes/base64 -> save file**.
-
-**Option A: DALL-E 3 (OpenAI)**
-```python
-from openai import OpenAI
-client = OpenAI(api_key="sk-...")
-
-response = client.images.generate(
-    model="dall-e-3",
-    prompt="Warm flat illustration: a kindergarten entrance...",
-    size="1792x1024",  # Landscape
-    quality="hd",
-    n=1,
-)
-image_url = response.data[0].url
-# Download the URL to a local file
-import requests
-img_data = requests.get(image_url).content
-with open("assets/cover_hero.png", "wb") as f:
-    f.write(img_data)
-```
-
-**Option B: Stable Diffusion WebUI (self-hosted)**
-```python
-import requests, base64
-
-response = requests.post("http://localhost:7860/sdapi/v1/txt2img", json={
-    "prompt": "warm flat illustration, kindergarten entrance...",
-    "negative_prompt": "text, watermark, signature, face details",
-    "width": 1536,
-    "height": 1024,
-    "steps": 30,
-    "sampler_name": "DPM++ 2M Karras",
-})
-image_b64 = response.json()["images"][0]
-with open("assets/cover_hero.png", "wb") as f:
-    f.write(base64.b64decode(image_b64))
-```
-
-**Option C: Tongyi Wanxiang (Alibaba Cloud)**
-```python
-import dashscope
-dashscope.api_key = "sk-..."
-
-response = dashscope.ImageSynthesis.call(
-    model="wanx-v1",
-    prompt="Warm flat illustration: a kindergarten entrance...",
-    n=1,
-    size="1536*1024",
-)
-image_url = response.output.results[0].url
-# Download and save locally
-```
-
-**Option D: Midjourney (third-party API proxy)**
-```python
-# Through goapi or a similar proxy
-response = requests.post("https://api.midjourney.com/imagine", json={
-    "prompt": "warm flat illustration... --ar 3:2",
-    "callback_url": "https://your-server.com/callback",
-})
-# Wait asynchronously for the callback, then download the returned image URL
-```
-
-**Prompt template** (API-independent):
-```
-[visual style] + [color tone] + [scene description] + [treatment of people] + [prohibited elements]
-```
-Key points:
-- Specify the visual style (for example, "warm flat illustration").
-- Specify a color tone consistent with the DESIGN.md palette.
-- **Always show people from the back or in profile; do not render clear facial features.**
-- Always end with: "Do not include any text or watermarks in the image."
-
-> **Summary**: `ImageGen` = **call a text-to-image API + save the file**. The interface is consistent; switching APIs changes only the invocation code, not the prompt.
-
----
-
-### Step 6: Produce, Validate, and Deliver Every Slide
-
-#### 6.1 Produce Each Slide
-Write content slide by slide according to the STORY.md contract and inject it into the PowerPoint engine.
-
-**Example of slide-by-slide production with python-pptx**:
-```python
-from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
-
-prs = Presentation()
-prs.slide_width = Inches(13.333)
-prs.slide_height = Inches(7.5)
-
-# === Cover slide (Hero) ===
-slide = prs.slides.add_slide(prs.slide_layouts[6])  # Blank layout
-# Full-bleed background image
-slide.shapes.add_picture("assets/cover_hero.png", 0, 0, prs.slide_width, prs.slide_height)
-# Gradient overlay (a translucent rectangle over the bottom to preserve text legibility)
-from pptx.util import Emu
-overlay = slide.shapes.add_shape(1, Inches(0), Inches(4.5), prs.slide_width, Inches(3))
-overlay.fill.solid()
-overlay.fill.fore_color.rgb = RGBColor(0xE8, 0x60, 0x3C)  # Primary color
-overlay.fill.fore_color.brightness = -0.3  # Darken
-# Title
-txBox = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(11), Inches(1.5))
-tf = txBox.text_frame
-tf.text = "Devoted to Every Child, Guided by an Enduring Calling"
-tf.paragraphs[0].font.size = Pt(44)
-tf.paragraphs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-tf.paragraphs[0].font.bold = True
-tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-
-# === Content slide (image left, text right) ===
-slide2 = prs.slides.add_slide(prs.slide_layouts[6])
-slide2.shapes.add_picture("assets/teacher_kids.png", Inches(0), Inches(0), Inches(7), Inches(7.5))
-# Right-side text area
-txBox2 = slide2.shapes.add_textbox(Inches(7.5), Inches(1), Inches(5), Inches(5.5))
-# ...
-
-prs.save("tribute_to_early_childhood_educator_zhang_shiyao.pptx")
-```
-
-#### Tool 5: `slidep-validate --all --project .`
-
-**What it is**: Validates the syntax and structural correctness of all slide files.
-
-**Interface contract**:
-```
-Input:
-  --all: flag           — Validate every slide
-  --project: string     — Project path
-Output: Pass/fail status and error details for each slide
-Side effects: None (read-only validation)
-```
-
-**Cross-platform implementation**:
-
-This is essentially a **linting/validation script**. The checks depend on the PowerPoint engine.
-
-**Example python-pptx validation script**:
-```python
-import os
-from pptx import Presentation
-from pptx.util import Emu
-
-def validate_pptx(pptx_path, assets_dir):
-    errors = []
-    prs = Presentation(pptx_path)
-
-    # Check 1: Total slide count
-    expected_pages = 16
-    actual_pages = len(prs.slides)
-    if actual_pages != expected_pages:
-        errors.append(f"Slide count mismatch: expected {expected_pages}, found {actual_pages}")
-
-    for i, slide in enumerate(prs.slides):
-        # Check 2: Image paths exist
-        for shape in slide.shapes:
-            if shape.shape_type == 13:  # PICTURE
-                img_path = shape.image.filename or ""
-                if img_path and not os.path.exists(img_path):
-                    errors.append(f"Slide {i+1}: image does not exist: {img_path}")
-
-        # Check 3: Text does not overflow (basic check)
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    text = para.text
-                    if len(text) > 200:
-                        errors.append(f"Slide {i+1}: text is too long ({len(text)} characters) and may overflow")
-
-    # Check 4: Color compliance (sample text colors and verify that they belong to the DESIGN.md palette)
-    # ...
-
-    return errors
-
-errors = validate_pptx("output.pptx", "assets/")
-if errors:
-    for e in errors:
-        print(f"FAIL: {e}")
-else:
-    print("PASS: All checks passed")
-```
-
-**General validation checklist**:
-- [ ] Total slide count matches the outline.
-- [ ] Each slide title matches the outline.
-- [ ] Every slide includes all key content.
-- [ ] Image files exist and paths are correct.
-- [ ] Fonts are available on the target system.
-- [ ] Colors match the DESIGN.md palette (no out-of-palette values).
-- [ ] Text does not overflow the slide.
-- [ ] Images contain no unintended watermarks.
-
-#### Tool 6: `present_files(files)`
-
-**What it is**: Presents files to the user and opens previews in a panel.
-
-**Interface contract**:
-```
-Input:
-  files: string[]       — Array of file paths or URLs
-  cwd: string           — Optional working directory
-  explanation: string   — Optional delivery note
-Output: The user sees file previews in the interface
-Side effects: Opens files in the user interface
-```
-
-**Cross-platform implementation**:
-
-The core requirement is to **deliver the finished file to the user**.
-
-| Platform Capability | Implementation | Code Example |
-|---------|---------|---------|
-| **Chat file attachments** | Send as an attachment | Slack: `files.upload`; Lark: `im/v1/files`; WeChat: send a file message |
-| **Cloud storage** | Upload to S3/OSS and return a download link | `boto3.client('s3').upload_file(...)` -> return the URL |
-| **Local path** | Tell the user the file path | `print(f"File saved: {os.path.abspath(path)}")` |
-| **Email** | Send as an email attachment | SMTP `MIMEMultipart` + attachment |
-| **Web download** | Start a temporary file server | `python -m http.server 8080` -> provide a download link |
-
-**General implementation (Python)**:
-```python
-import shutil, os
-
-def deliver_file(file_path, platform="local"):
-    if platform == "local":
-        abs_path = os.path.abspath(file_path)
-        print(f"File ready: {abs_path}")
-        return abs_path
-    elif platform == "s3":
-        import boto3
-        s3 = boto3.client('s3')
-        key = os.path.basename(file_path)
-        s3.upload_file(file_path, "my-bucket", key)
-        url = f"https://my-bucket.s3.amazonaws.com/{key}"
-        print(f"Download URL: {url}")
-        return url
-    elif platform == "chat":
-        # Use the platform SDK to send the file
-        send_file_to_chat(file_path)
-        return "sent"
-```
-
-> **Summary**: `present_files` = **push the file to the user**. Choose the method appropriate for the delivery channel: send an attachment, upload to cloud storage and return a link, or provide the local path.
-
----
-
-## 3. Key Layout Principles
-
-- **Hero slides as visual high points**: Use them for approximately one quarter of the deck (four in a 16-slide deck), distributed evenly across the opening, the midpoint climax, and the ending rather than clustered together.
-- **Primarily asymmetric layouts**: Allocate 55–60% to images and 40–45% to text, using offset placement. Use fully symmetrical layouts only for ceremonial slides such as acknowledgments.
-- **Rhythm**: Alternate hero slides (full-bleed image + large title) with content slides (column-based information).
-- **Color consistency**: Use only the palette locked in DESIGN.md across all slides; keep illustration tones in the same color family as the slide backgrounds.
-
----
-
-## 4. Tool Implementation Overview
-
-| Tool | Essential Function | Minimum Implementation | Recommended Implementation |
-|------|------|---------|---------|
-| `read_me` | Load design tokens | Hard-coded JSON constants | Separate JSON configuration file + loader function |
-| `show_widget` | Render SVG/HTML inline | Convert to a text description | Convert SVG to PNG + send the image |
-| `slidep-start` | Create PowerPoint + watch files | `prs.save()` from `python-pptx` | python-pptx + automatic rebuild with watchdog |
-| `ImageGen` | Text-to-image API | Any text-to-image API | DALL-E 3 or Stable Diffusion |
-| `slidep-validate` | Linting/validation script | Per-slide checklist | Automated Python validation script |
-| `present_files` | Deliver files | Provide the local path | Upload to cloud storage + return a download link |
-
----
-
-## 5. Lessons Learned in Production
-
-| # | Lesson | General/Specific |
-|---|------|----------|
-| 1 | Use absolute image paths, not relative paths. | General (all engines) |
-| 2 | Do not use array indexing such as `[...][idx]` inside JSX/template attributes; use named object fields instead. | Specific (JSX engines) |
-| 3 | Icon names must exist in the icon library's metadata (for example, if `sunset` does not exist, use `cloud-sun`). | Specific (icon libraries) |
-| 4 | Confirm that required fonts are installed (`fc-list`) and choose broadly available fonts such as Songti SC or PingFang SC. | General |
-| 5 | Mitigate AI-image watermarks with a page gradient overlay or by adding prohibited terms to the prompt. | General |
-| 6 | Validation tools can produce noisy output; filter stack-trace lines and focus on results. | General |
-| 7 | Use a lighter variant of the primary color for subtitles (reduce saturation); do not introduce a new color. | General (design) |
-| 8 | Use explicit `\n` line breaks for long body copy instead of relying on automatic wrapping, ensuring cross-engine compatibility. | General |
-
----
-
-## 6. Draft Agent System Prompt
-
-The following can be used directly as the agent's system prompt:
-
-```
-You are a professional PowerPoint production assistant. After receiving the user's topic and outline, follow this process:
-
-1. Parse the outline, determine the slide count and structure, and create a task list.
-2. Prepare four visual-style options (palette + mood description) and render preview cards for the user to select from.
-   - Rendering method: generate SVG preview cards -> convert them to PNG -> send them to the user.
-   - If images cannot be sent, fall back to text descriptions and ask the user to reply with A/B/C/D.
-3. After the user selects an option, write STORY.md (the slide-by-slide narrative contract) and DESIGN.md (strict visual constraints).
-4. Create an empty PowerPoint file with python-pptx.
-5. Generate supporting images according to the design document (6–8 illustrations in a consistent style, using a text-to-image API).
-   - Every prompt must include: visual style + color tone + scene + people shown from behind + "no text or watermarks."
-6. Produce the PowerPoint slide by slide and write each slide with python-pptx.
-   - Favor asymmetric layouts and distribute hero slides evenly throughout the deck.
-7. Run the validation script and confirm that all checks pass.
-8. Send the .pptx file to the user.
-
-Rules:
-- Do not add or remove slides, titles, or key content from the outline; refine wording only.
-- Create visuals before laying out text.
-- Once the palette is locked, do not use colors outside it.
-- Select broadly available system fonts and define fallback chains.
-- Use absolute image paths.
-```
+- an analytical deck no longer defaults to illustration-led slides
+- charts and tables are selected from evidence semantics
+- sample content slides are approved before full production
+- typography is rendered with real content and explicitly approved by the user
+- script-specific fonts and fallbacks pass installation and glyph checks
+- each slide is composed from editable components on a grid
+- every slide is rendered and visually critiqued
+- repair targets the responsible layer instead of regenerating the whole deck
+- template references influence structure, not only palette
+- key slides are selected from rendered structural alternatives, not first drafts
+- independent critics and red-team review pass at the deliberate-mode threshold
+- token savings come from caching, compact context, deterministic tools, and delta
+  repair without reducing quality scores
+- a benchmark strategy deck passes the acceptance test in Section 17
+- human reviewers prefer v2 output to both the current output and the benchmark in
+  blind pairwise evaluation — this last gate is an operational study, not a unit
+  test in this repository

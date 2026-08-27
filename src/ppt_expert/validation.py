@@ -123,26 +123,8 @@ def validate_presentation(
                 )
                 break
 
-    palette = {
-        value.upper()
-        for value in [
-            design.primary,
-            design.secondary,
-            design.background,
-            design.text,
-            design.accent,
-            "#FFFFFF",
-        ]
-    }
-    allowed_fonts = {
-        font.casefold()
-        for font in [
-            design.title_font,
-            design.body_font,
-            *design.title_font_fallbacks,
-            *design.body_font_fallbacks,
-        ]
-    }
+    palette = design.palette_hex()
+    allowed_fonts = design.allowed_font_names()
     for slide_index, slide in enumerate(presentation.slides, 1):
         unexpected_colors = _shape_colors(slide) - palette
         if unexpected_colors:

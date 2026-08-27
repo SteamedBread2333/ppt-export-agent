@@ -16,6 +16,60 @@ class LayoutType(StrEnum):
     DATA_CARDS = "data_cards"
 
 
+class SlideFamily(StrEnum):
+    COVER = "cover"
+    SECTION = "section"
+    EXECUTIVE_SUMMARY = "executive_summary"
+    KPI_STRIP = "kpi_strip"
+    CHART_INTERPRETATION = "chart_interpretation"
+    DUAL_CHART = "dual_chart"
+    TABLE_COMPARISON = "table_comparison"
+    SCENARIO_MATRIX = "scenario_matrix"
+    ALLOCATION = "allocation"
+    WATERFALL = "waterfall"
+    HEATMAP = "heatmap"
+    TIMELINE = "timeline"
+    PILLARS = "pillars"
+    QUOTE = "quote"
+    CONCLUSION = "conclusion"
+    APPENDIX = "appendix"
+    HERO = "hero"
+    LEFT_IMAGE = "left_image"
+    RIGHT_IMAGE = "right_image"
+    TOP_IMAGE = "top_image"
+    TEXT = "text"
+    DATA_CARDS = "data_cards"
+
+
+class DeckArchetype(StrEnum):
+    STRATEGY = "strategy"
+    RESEARCH = "research"
+    PRODUCT = "product"
+    NARRATIVE = "narrative"
+    OPERATING = "operating"
+
+
+class VisualForm(StrEnum):
+    KPI = "kpi"
+    CHART = "chart"
+    TABLE = "table"
+    MATRIX = "matrix"
+    ALLOCATION = "allocation"
+    WATERFALL = "waterfall"
+    HEATMAP = "heatmap"
+    TIMELINE = "timeline"
+    DIAGRAM = "diagram"
+    QUOTE = "quote"
+    NARRATIVE = "narrative"
+
+
+class ChartType(StrEnum):
+    LINE = "line"
+    COLUMN = "column"
+    BAR = "bar"
+    AREA = "area"
+
+
 class OutlinePage(BaseModel):
     number: int = Field(ge=1)
     title: str = Field(min_length=1)
@@ -70,6 +124,113 @@ class StyleOptions(BaseModel):
         return values
 
 
+class TypographyProfile(BaseModel):
+    id: str
+    name: str
+    mood: str
+    latin_font: str
+    east_asian_font: str
+    numeric_font: str
+    fallbacks: list[str] = Field(default_factory=list)
+    recommended: bool = False
+    installed: bool = True
+    specimen_path: str | None = None
+
+
+class KPIItem(BaseModel):
+    value: str
+    label: str
+    note: str = ""
+
+
+class ChartSeries(BaseModel):
+    name: str
+    values: list[float] = Field(min_length=1)
+
+
+class ChartSpec(BaseModel):
+    chart_type: ChartType = ChartType.LINE
+    title: str = ""
+    categories: list[str] = Field(min_length=1)
+    series: list[ChartSeries] = Field(min_length=1)
+
+
+class TableSpec(BaseModel):
+    headers: list[str] = Field(min_length=1)
+    rows: list[list[str]] = Field(min_length=1)
+    highlight_row: int | None = None
+
+
+class AllocationItem(BaseModel):
+    label: str
+    percent: float = Field(ge=0, le=100)
+    note: str = ""
+
+
+class ScenarioColumn(BaseModel):
+    name: str
+    probability: str
+    trigger: str = ""
+    outcome: str = ""
+    implication: str = ""
+    featured: bool = False
+
+
+class WaterfallItem(BaseModel):
+    label: str
+    value: float
+    total: bool = False
+
+
+class HeatmapSpec(BaseModel):
+    rows: list[str] = Field(min_length=1)
+    columns: list[str] = Field(min_length=1)
+    values: list[list[float]] = Field(min_length=1)
+
+
+class Milestone(BaseModel):
+    label: str
+    date: str = ""
+    note: str = ""
+
+
+class DeckBrief(BaseModel):
+    objective: str
+    audience: str = ""
+    decision_context: str = ""
+    duration_minutes: int = 20
+    language: str = "en"
+    slide_count: int = 1
+    primary_archetype: DeckArchetype = DeckArchetype.RESEARCH
+    secondary_archetype: DeckArchetype | None = None
+    density: Literal["low", "medium", "high"] = "medium"
+
+    def needs_confirmation(self) -> bool:
+        return not self.audience.strip() or not self.objective.strip()
+
+
+class EvidenceItem(BaseModel):
+    id: str
+    kind: Literal["claim", "metric", "quote", "event", "recommendation", "risk"] = "claim"
+    statement: str
+    value: float | None = None
+    unit: str = ""
+    period: str = ""
+    source: str | None = None
+    confidence: Literal["confirmed", "estimated", "illustrative"] = "estimated"
+
+
+class EvidenceBundle(BaseModel):
+    items: list[EvidenceItem] = Field(default_factory=list)
+
+
+class SlideQuality(BaseModel):
+    page: int
+    score: int = Field(ge=0, le=100)
+    family: str
+    issues: list[str] = Field(default_factory=list)
+
+
 class ReferenceAnalysis(BaseModel):
     source_type: Literal["template", "images", "mixed"]
     template_path: str | None = None
@@ -79,6 +240,7 @@ class ReferenceAnalysis(BaseModel):
     title_font: str | None = None
     body_font: str | None = None
     notes: list[str] = Field(default_factory=list)
+    layout_families: list[str] = Field(default_factory=list)
 
 
 class DesignSpec(BaseModel):
@@ -108,6 +270,57 @@ class DesignSpec(BaseModel):
             "identifiable faces",
         ]
     )
+    muted: str | None = None
+    surface: str | None = None
+    latin_font: str | None = None
+    east_asian_font: str | None = None
+    numeric_font: str | None = None
+    typography_profile: str = "modern_consulting"
+    positive: str | None = None
+    negative: str | None = None
+    warning: str | None = None
+    grid_columns: int = 12
+    grid_gutter: float = 0.16
+    safe_margin: float = 0.62
+
+    @field_validator("muted", "surface", "positive", "negative", "warning")
+    @classmethod
+    def optional_hex(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.upper()
+        if len(value) != 7 or not value.startswith("#"):
+            raise ValueError("color must be #RRGGBB")
+        int(value[1:], 16)
+        return value
+
+    def palette_hex(self) -> set[str]:
+        values = [
+            self.primary,
+            self.secondary,
+            self.background,
+            self.text,
+            self.accent,
+            "#FFFFFF",
+            self.muted,
+            self.surface,
+            self.positive,
+            self.negative,
+            self.warning,
+        ]
+        return {item.upper() for item in values if item}
+
+    def allowed_font_names(self) -> set[str]:
+        names = [
+            self.title_font,
+            self.body_font,
+            *self.title_font_fallbacks,
+            *self.body_font_fallbacks,
+            self.latin_font,
+            self.east_asian_font,
+            self.numeric_font,
+        ]
+        return {name.casefold() for name in names if name}
 
 
 class StoryPage(BaseModel):
@@ -118,6 +331,42 @@ class StoryPage(BaseModel):
     layout: LayoutType
     image_id: str | None = None
     section: str = ""
+    family: SlideFamily | None = None
+    eyebrow: str = ""
+    subtitle: str = ""
+    takeaway: str = ""
+    source_note: str = ""
+    kpis: list[KPIItem] = Field(default_factory=list)
+    chart: ChartSpec | None = None
+    table: TableSpec | None = None
+    allocation: list[AllocationItem] = Field(default_factory=list)
+    scenarios: list[ScenarioColumn] = Field(default_factory=list)
+    waterfall: list[WaterfallItem] = Field(default_factory=list)
+    heatmap: HeatmapSpec | None = None
+    milestones: list[Milestone] = Field(default_factory=list)
+    quote: str = ""
+    chart_secondary: ChartSpec | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    visual_form: VisualForm | None = None
+    confidence: Literal["confirmed", "estimated", "illustrative"] = "estimated"
+    purpose: str = ""
+    composition: str = ""
+
+    def resolved_family(self) -> SlideFamily:
+        if self.family is not None:
+            return self.family
+        return SlideFamily(self.layout.value)
+
+    def needs_artwork(self) -> bool:
+        if not self.image_id:
+            return False
+        family = self.resolved_family()
+        return family in {
+            SlideFamily.HERO,
+            SlideFamily.LEFT_IMAGE,
+            SlideFamily.RIGHT_IMAGE,
+            SlideFamily.TOP_IMAGE,
+        }
 
 
 class StoryDesignBundle(BaseModel):
@@ -151,6 +400,34 @@ class ValidationReport(BaseModel):
     pptx_path: str
 
 
+class QualityIssue(BaseModel):
+    code: str
+    message: str
+    page: int | None = None
+    severity: Literal["error", "warning"] = "warning"
+    cause: str = ""
+    repair_scope: Literal["token", "component", "slide", "rhythm", "narrative"] = "slide"
+    acceptance: str = ""
+
+
+class VisionCritique(BaseModel):
+    score: int = Field(ge=0, le=100)
+    issues: list[QualityIssue] = Field(default_factory=list)
+    notes: str = "completed"
+
+
+class QualityReport(BaseModel):
+    score: int = Field(ge=0, le=100)
+    blocking_issues: list[QualityIssue] = Field(default_factory=list)
+    warnings: list[QualityIssue] = Field(default_factory=list)
+    dimensions: dict[str, int] = Field(default_factory=dict)
+    critic_scores: dict[str, int] = Field(default_factory=dict)
+    slide_scores: list[SlideQuality] = Field(default_factory=list)
+    contact_sheet_path: str = ""
+    delivery: Literal["final", "reviewable_draft"] = "reviewable_draft"
+    vision_review: str = "structural_only"
+
+
 class ArtifactBundle(BaseModel):
     project_dir: str
     pptx_path: str
@@ -158,6 +435,8 @@ class ArtifactBundle(BaseModel):
     design_path: str
     report_path: str
     preview_paths: list[str] = Field(default_factory=list)
+    quality_path: str = ""
+    contact_sheet_path: str = ""
 
 
 class PPTAgentState(TypedDict, total=False):
@@ -169,16 +448,26 @@ class PPTAgentState(TypedDict, total=False):
     reference_analysis: dict[str, Any]
     reference_decision: str
     outline: dict[str, Any]
+    brief: dict[str, Any]
+    evidence: list[dict[str, Any]]
     styles: list[dict[str, Any]]
     style_preview_paths: list[str]
     selected_style: dict[str, Any]
+    typography_profiles: list[dict[str, Any]]
+    typography_preview_paths: list[str]
+    selected_typography: dict[str, Any]
     story: list[dict[str, Any]]
     design: dict[str, Any]
     image_plan: list[dict[str, Any]]
     image_paths: dict[str, str]
     pptx_path: str
     validation: dict[str, Any]
+    quality: dict[str, Any]
+    contact_sheet_path: str
+    draft_decision: str
+    draft_notes: str
     repair_attempts: int
+    composition_path: str
     artifacts: dict[str, Any]
 
 

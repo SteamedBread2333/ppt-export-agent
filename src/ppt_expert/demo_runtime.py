@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from ppt_expert.models import (
+    ChartSeries,
+    ChartSpec,
+    ChartType,
     DesignSpec,
     ImagePlan,
-    ImageRequest,
+    KPIItem,
     LayoutType,
     OutlinePage,
     OutlinePlan,
+    SlideFamily,
     StoryDesignBundle,
     StoryPage,
     StyleOption,
@@ -102,9 +106,18 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                     number=1,
                     title="From Idea to Presentation",
                     content=["Make every message more compelling"],
-                    visual_direction="Abstract beams converging into a presentation canvas",
+                    visual_direction="Consulting cover with KPIs, not a full-bleed illustration",
                     layout=LayoutType.HERO,
-                    image_id="hero_open",
+                    family=SlideFamily.COVER,
+                    eyebrow="PPT EXPERT",
+                    subtitle="A host-model workflow that designs before it decorates",
+                    takeaway="Design the argument before decorating the slide.",
+                    source_note="Demo fixture",
+                    kpis=[
+                        KPIItem(value="4", label="Slides", note="Outline fidelity"),
+                        KPIItem(value="1", label="Assertion", note="Per slide"),
+                        KPIItem(value="0", label="Decorative art", note="Cover is vector"),
+                    ],
                 ),
                 StoryPage(
                     number=2,
@@ -114,24 +127,43 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                         "Create a focal point on every slide",
                         "Control information density",
                     ],
-                    visual_direction="A figure arranging cards along a narrative path",
-                    layout=LayoutType.LEFT_IMAGE,
-                    image_id="story_flow",
+                    visual_direction="Line chart of narrative density across the deck",
+                    layout=LayoutType.TEXT,
+                    family=SlideFamily.CHART_INTERPRETATION,
+                    eyebrow="STRUCTURE",
+                    takeaway="Density should peak once, then resolve.",
+                    source_note="Demo fixture",
+                    chart=ChartSpec(
+                        chart_type=ChartType.LINE,
+                        title="",
+                        categories=["Cover", "Narrative", "System", "Close"],
+                        series=[
+                            ChartSeries(name="Focus", values=[8, 12, 9, 6]),
+                            ChartSeries(name="Support", values=[3, 5, 7, 4]),
+                        ],
+                    ),
                 ),
                 StoryPage(
                     number=3,
                     title="Design and Content in Sync",
                     content=["Unified palette", "Visual rhythm", "Automated validation"],
-                    visual_direction="Color, imagery, and typography working as one system",
+                    visual_direction="Three operating pillars as native cards",
                     layout=LayoutType.DATA_CARDS,
+                    family=SlideFamily.PILLARS,
+                    eyebrow="SYSTEM",
+                    takeaway="Palette, rhythm, and validation stay in one system.",
+                    source_note="Demo fixture",
                 ),
                 StoryPage(
                     number=4,
                     title="Make Every Presentation Count",
                     content=["Complete, validate, and deliver"],
-                    visual_direction="A distant stage with an ascending beam of light",
-                    layout=LayoutType.HERO,
-                    image_id="hero_close",
+                    visual_direction="Closing recommendation, not a second hero photograph",
+                    layout=LayoutType.TEXT,
+                    family=SlideFamily.CONCLUSION,
+                    eyebrow="NEXT STEP",
+                    takeaway="Deliver only after validation and a human pass.",
+                    source_note="Demo fixture",
                 ),
             ],
             design=DesignSpec(
@@ -146,32 +178,5 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
             ),
         )
     if schema is ImagePlan:
-        return ImagePlan(
-            images=[
-                ImageRequest(
-                    image_id="hero_open",
-                    page_numbers=[1],
-                    prompt=(
-                        "Contemporary warm flat illustration, abstract beams converging, "
-                        "no text or watermarks"
-                    ),
-                ),
-                ImageRequest(
-                    image_id="story_flow",
-                    page_numbers=[2],
-                    prompt=(
-                        "Contemporary warm flat illustration, rear-view figure arranging "
-                        "story cards, no text or watermarks"
-                    ),
-                ),
-                ImageRequest(
-                    image_id="hero_close",
-                    page_numbers=[4],
-                    prompt=(
-                        "Contemporary warm flat illustration, distant stage, "
-                        "no text or watermarks"
-                    ),
-                ),
-            ]
-        )
+        return ImagePlan(images=[])
     raise ValueError(f"Unsupported demo schema: {schema.__name__}")

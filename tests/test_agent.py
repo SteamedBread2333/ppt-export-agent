@@ -12,6 +12,27 @@ from ppt_expert.demo_runtime import fake_structured_generate
 from ppt_expert.models import StoryDesignBundle
 
 
+async def _complete(agent, pending, *, style="A", typography="recommended"):
+    result = pending
+    while result["status"] == "interrupted":
+        kind = result["request"]["type"]
+        if kind == "brief_confirmation":
+            result = await agent.resume(result["thread_id"], {"action": "continue"})
+        elif kind == "style_confirmation":
+            result = await agent.resume(result["thread_id"], style)
+        elif kind == "typography_confirmation":
+            result = await agent.resume(
+                result["thread_id"], {"action": "use", "profile": typography}
+            )
+        elif kind == "draft_confirmation":
+            result = await agent.resume(result["thread_id"], {"action": "approve"})
+        elif kind == "reference_confirmation":
+            raise AssertionError("reference confirmation should be handled by the test")
+        else:
+            raise AssertionError(kind)
+    return result
+
+
 @pytest.mark.asyncio
 async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
     config = AgentConfig(
@@ -27,7 +48,20 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
         assert interrupted["request"]["type"] == "style_confirmation"
         assert len(interrupted["request"]["preview_paths"]) == 4
 
-        completed = await agent.resume(interrupted["thread_id"], "A")
+        pending = await agent.resume(interrupted["thread_id"], "A")
+        assert pending["status"] == "interrupted"
+        assert pending["request"]["type"] == "typography_confirmation"
+        assert pending["request"]["preview_paths"]
+
+        completed = await agent.resume(
+            pending["thread_id"], {"action": "use", "profile": "recommended"}
+        )
+        assert completed["status"] == "interrupted"
+        assert completed["request"]["type"] == "draft_confirmation"
+        assert completed["request"]["contact_sheet_path"]
+        assert completed["request"]["quality"]["score"] >= 80
+
+        completed = await agent.resume(pending["thread_id"], {"action": "approve"})
         assert completed["status"] == "completed"
         assert completed["validation"]["valid"] is True
 
@@ -35,8 +69,16 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
     assert Path(artifacts["story_path"]).exists()
     assert Path(artifacts["design_path"]).exists()
     assert Path(artifacts["report_path"]).exists()
+    assert Path(artifacts["quality_path"]).exists()
+    assert Path(artifacts["contact_sheet_path"]).exists()
+    metrics = Path(artifacts["project_dir"]) / "metrics.jsonl"
+    assert metrics.exists()
+    recorded = [line for line in metrics.read_text(encoding="utf-8").splitlines() if line]
+    assert any('"node": "parse_outline"' in line for line in recorded)
+    assert any('"node": "build_story_design"' in line for line in recorded)
     presentation = Presentation(artifacts["pptx_path"])
     assert len(presentation.slides) == 4
+    assert any(shape.has_chart for shape in presentation.slides[1].shapes)
 
 
 @pytest.mark.asyncio
@@ -79,7 +121,7 @@ async def test_validation_failure_routes_through_repair(tmp_path: Path) -> None:
     )
     async with create_ppt_agent(HostRuntime(structured_generate=host_generate), config) as agent:
         interrupted = await agent.start("repair test")
-        completed = await agent.resume(interrupted["thread_id"], "A")
+        completed = await _complete(agent, interrupted)
         state = await agent.state(interrupted["thread_id"])
 
     assert completed["validation"]["valid"] is True
@@ -105,7 +147,8 @@ async def test_reference_image_uses_human_confirmation(tmp_path: Path) -> None:
     ) as agent:
         pending = await agent.start("reference test", reference_images=[reference])
         assert pending["request"]["type"] == "reference_confirmation"
-        completed = await agent.resume(pending["thread_id"], {"action": "use"})
+        pending = await agent.resume(pending["thread_id"], {"action": "use"})
+        completed = await _complete(agent, pending)
 
     assert completed["status"] == "completed"
     project = Path(completed["artifacts"]["project_dir"])
@@ -132,12 +175,14 @@ async def test_pptx_template_is_used_after_confirmation(tmp_path: Path) -> None:
     ) as agent:
         pending = await agent.start("template test", template_path=template)
         assert pending["request"]["type"] == "reference_confirmation"
-        completed = await agent.resume(pending["thread_id"], "use")
+        pending = await agent.resume(pending["thread_id"], "use")
+        completed = await _complete(agent, pending)
 
     presentation = Presentation(completed["artifacts"]["pptx_path"])
     assert len(presentation.slides) == 4
     assert presentation.slide_width == Inches(13.333)
     assert presentation.slide_height == Inches(7.5)
+    assert presentation.slides[0].slide_layout.name == "Title Slide"
 
 
 @pytest.mark.asyncio

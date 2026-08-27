@@ -27,6 +27,13 @@ def demo(
     style: Annotated[
         str | None, typer.Option(help="Choose A/B/C/D without prompting")
     ] = None,
+    typography: Annotated[
+        str | None,
+        typer.Option(help="Typography profile id, or recommended"),
+    ] = None,
+    draft: Annotated[
+        str | None, typer.Option(help="Draft decision: approve or revise")
+    ] = None,
     template: Annotated[
         Path | None, typer.Option(help="Optional PPTX template")
     ] = None,
@@ -49,28 +56,86 @@ def demo(
                 template_path=template,
                 reference_images=reference_image or [],
             )
-            request = result["request"]
-            if request["type"] == "reference_confirmation":
-                typer.echo("References and extracted visual direction:")
-                for path in request["reference"]["preview_paths"]:
-                    typer.echo(f"  {path}")
-                result = await agent.resume(
-                    result["thread_id"], {"action": reference_action}
-                )
-                if result["status"] == "completed":
-                    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
-                    return
+            while result["status"] == "interrupted":
                 request = result["request"]
-            typer.echo("Visual direction previews:")
-            for path in request["preview_paths"]:
-                typer.echo(f"  {path}")
-            choice = (
-                style or typer.prompt("Choose direction A/B/C/D", default="A")
-            ).upper()
-            completed = await agent.resume(result["thread_id"], choice)
-            typer.echo(json.dumps(completed, ensure_ascii=False, indent=2))
+                if request["type"] == "brief_confirmation":
+                    typer.echo("Brief needs confirmation:")
+                    typer.echo(json.dumps(request["brief"], ensure_ascii=False, indent=2))
+                    result = await agent.resume(result["thread_id"], {"action": "continue"})
+                elif request["type"] == "reference_confirmation":
+                    typer.echo("References and extracted visual direction:")
+                    for path in request["reference"]["preview_paths"]:
+                        typer.echo(f"  {path}")
+                    result = await agent.resume(
+                        result["thread_id"], {"action": reference_action}
+                    )
+                elif request["type"] == "style_confirmation":
+                    typer.echo("Visual direction previews:")
+                    for path in request["preview_paths"]:
+                        typer.echo(f"  {path}")
+                    choice = (
+                        style or typer.prompt("Choose direction A/B/C/D", default="A")
+                    ).upper()
+                    result = await agent.resume(result["thread_id"], choice)
+                elif request["type"] == "typography_confirmation":
+                    typer.echo("Typography specimens:")
+                    for path in request["preview_paths"]:
+                        typer.echo(f"  {path}")
+                    profile = typography or typer.prompt(
+                        "Typography profile", default=request.get("recommended", "recommended")
+                    )
+                    result = await agent.resume(
+                        result["thread_id"], {"action": "use", "profile": profile}
+                    )
+                elif request["type"] == "draft_confirmation":
+                    typer.echo(
+                        f"Quality score: {request['quality']['score']}"
+                    )
+                    if request.get("contact_sheet_path"):
+                        typer.echo(f"  {request['contact_sheet_path']}")
+                    action = draft or typer.prompt(
+                        "Approve draft or revise", default="approve"
+                    )
+                    result = await agent.resume(
+                        result["thread_id"], {"action": action}
+                    )
+                else:
+                    raise RuntimeError(f"Unsupported interrupt: {request['type']}")
+            typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
     asyncio.run(run())
+
+
+@app.command()
+def benchmark(
+    output: Annotated[Path, typer.Option(help="Output directory")] = Path(
+        "outputs/strategy-benchmark"
+    ),
+) -> None:
+    """Render the nine-slide strategy acceptance fixture and score it."""
+    from ppt_expert.benchmarks import STRATEGY_DESIGN, strategy_benchmark_pages
+    from ppt_expert.models import OutlinePage
+    from ppt_expert.quality import score_deck, write_quality_report
+
+    output.mkdir(parents=True, exist_ok=True)
+    pages = strategy_benchmark_pages()
+    path = output / "strategy-benchmark.pptx"
+    render_presentation(pages, STRATEGY_DESIGN, {}, path, AgentConfig())
+    outline = OutlinePlan(
+        title="Strategy benchmark",
+        pages=[
+            OutlinePage(number=page.number, title=page.title, core_content=page.content)
+            for page in pages
+        ],
+    )
+    report = validate_presentation(path, outline, pages, STRATEGY_DESIGN, {})
+    write_validation_report(report, output)
+    quality = score_deck(pages, STRATEGY_DESIGN, vision_available=False)
+    write_quality_report(quality, output)
+    typer.echo(f"{'PASS' if report.valid and quality.score >= 90 else 'FAIL'}: {path}")
+    typer.echo(f"Quality {quality.score} ({quality.delivery})")
+    if not report.valid or quality.score < 90:
+        raise typer.Exit(code=1)
 
 
 @app.command()
