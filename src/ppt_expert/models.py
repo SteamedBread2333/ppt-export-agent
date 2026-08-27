@@ -101,7 +101,12 @@ class DesignSpec(BaseModel):
     body_size: int = Field(default=18, ge=12, le=28)
     illustration_style: str
     forbidden_elements: list[str] = Field(
-        default_factory=lambda: ["文字", "水印", "签名", "清晰正脸"]
+        default_factory=lambda: [
+            "text",
+            "watermarks",
+            "signatures",
+            "identifiable faces",
+        ]
     )
 
 

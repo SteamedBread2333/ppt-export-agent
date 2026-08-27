@@ -40,8 +40,9 @@ class HostRuntime:
             except (ValidationError, ValueError, TypeError) as exc:
                 last_error = exc
                 current_prompt = (
-                    f"{prompt}\n\n上次输出未通过 {schema.__name__} 校验：{exc}。"
-                    "请只返回满足结构约束的完整结果。"
+                    f"{prompt}\n\nThe previous output failed {schema.__name__} "
+                    f"validation: {exc}. Return only a complete result that "
+                    "satisfies the schema."
                 )
         raise ValueError(f"Host output failed {schema.__name__} validation") from last_error
 

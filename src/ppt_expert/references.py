@@ -28,12 +28,12 @@ def analyze_references(
         template_colors, template_fonts = _template_tokens(Path(resolved_template))
         colors.update(template_colors)
         fonts.update(template_fonts)
-        notes.append("已提取模板中的色彩、字体、母版和页面尺寸")
+        notes.append("Extracted colors, fonts, masters, and page dimensions from template")
     for image_path in resolved_images:
         try:
             colors.update(_image_palette(Path(image_path)))
         except OSError as exc:
-            notes.append(f"参考图片无法读取：{Path(image_path).name}（{exc}）")
+            notes.append(f"Unable to read reference image {Path(image_path).name}: {exc}")
 
     palette = _semantic_palette(list(colors.elements()) or DEFAULT_COLORS)
     title_font = fonts.most_common(1)[0][0] if fonts else None
@@ -43,8 +43,8 @@ def analyze_references(
     )
     style = StyleOption(
         key="A",
-        name="用户参考风格",
-        mood="由用户关联的模板/图片直接提取",
+        name="Reference-led direction",
+        mood="Derived directly from user-linked templates and images",
         primary=palette[0],
         secondary=palette[1],
         background=palette[2],

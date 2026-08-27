@@ -22,7 +22,7 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
     runtime = HostRuntime(structured_generate=fake_structured_generate)
 
     async with create_ppt_agent(runtime, config) as agent:
-        interrupted = await agent.start("制作 PPT 大师工作流介绍", project_name="demo")
+        interrupted = await agent.start("Create a PPT Expert workflow overview", project_name="demo")
         assert interrupted["status"] == "interrupted"
         assert interrupted["request"]["type"] == "style_confirmation"
         assert len(interrupted["request"]["preview_paths"]) == 4
@@ -55,7 +55,7 @@ async def test_runtime_uses_host_model_structured_output() -> None:
 
     runtime = HostRuntime(model=HostModel())
     result = await runtime.generate_structured("test", OutlinePlan)
-    assert result.title == "PPT 大师演示"
+    assert result.title == "PPT Expert Demo"
 
 
 @pytest.mark.asyncio

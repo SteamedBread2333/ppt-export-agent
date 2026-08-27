@@ -77,7 +77,10 @@ def build_graph(checkpointer):
         response = interrupt(
             {
                 "type": "reference_confirmation",
-                "message": "已从关联模板/图片提取风格，请确认使用、调整或忽略",
+                "message": (
+                    "A visual direction was extracted from the linked template "
+                    "or images. Choose use, adjust, or ignore."
+                ),
                 "reference": analysis.model_dump(mode="json"),
                 "actions": ["use", "adjust", "ignore"],
             }
@@ -123,7 +126,7 @@ def build_graph(checkpointer):
         choice = interrupt(
             {
                 "type": "style_confirmation",
-                "message": "请选择视觉风格 A/B/C/D",
+                "message": "Choose visual direction A, B, C, or D.",
                 "styles": state["styles"],
                 "preview_paths": state["style_preview_paths"],
             }
@@ -377,9 +380,9 @@ def _complete_image_plan(
                 image_id=image_id,
                 page_numbers=page_numbers,
                 prompt=(
-                    f"{design.illustration_style}，色调使用 {design.primary}、"
-                    f"{design.secondary}、{design.background}，{directions}。"
-                    "画面中不出现任何文字、水印、签名和清晰五官"
+                    f"{design.illustration_style}. Use {design.primary}, "
+                    f"{design.secondary}, and {design.background}. {directions}. "
+                    "No text, watermarks, signatures, or identifiable facial details."
                 ),
             )
         result.append(item)

@@ -8,3 +8,4 @@ outputs/
 dist/
 build/
 *.egg-info/
+.workbuddy/

@@ -22,14 +22,14 @@ from ppt_expert.validation import validate_presentation
 
 def _design() -> DesignSpec:
     return DesignSpec(
-        style_name="测试风格",
-        mood="清晰",
+        style_name="Test Direction",
+        mood="Clear and composed",
         primary="#16324F",
         secondary="#2E6F95",
         background="#F4F8FB",
         text="#102A43",
         accent="#F29E4C",
-        illustration_style="现代扁平插画",
+        illustration_style="Contemporary flat illustration",
     )
 
 
@@ -38,15 +38,15 @@ def test_every_layout_renders_and_validates(tmp_path: Path) -> None:
     pages = [
         StoryPage(
             number=index,
-            title=f"页面 {index}",
-            content=[f"核心内容 {index}"],
-            visual_direction="抽象视觉",
+            title=f"Slide {index}",
+            content=[f"Core message {index}"],
+            visual_direction="Abstract visual composition",
             layout=layout,
         )
         for index, layout in enumerate(layouts, 1)
     ]
     outline = OutlinePlan(
-        title="版式测试",
+        title="Layout Test",
         pages=[
             OutlinePage(number=page.number, title=page.title, core_content=page.content)
             for page in pages

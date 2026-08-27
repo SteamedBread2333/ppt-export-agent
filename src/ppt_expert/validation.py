@@ -31,7 +31,7 @@ def validate_presentation(
         return ValidationReport(
             valid=False,
             pptx_path=str(path),
-            issues=[ValidationIssue(code="missing_pptx", message="PPTX 文件不存在")],
+            issues=[ValidationIssue(code="missing_pptx", message="PPTX file does not exist")],
         )
 
     presentation = Presentation(path)
@@ -39,12 +39,18 @@ def validate_presentation(
         issues.append(
             ValidationIssue(
                 code="page_count",
-                message=f"页数应为 {len(outline.pages)}，实际为 {len(presentation.slides)}",
+                message=(
+                    f"Expected {len(outline.pages)} slides; "
+                    f"found {len(presentation.slides)}"
+                ),
             )
         )
     if len(story) != len(outline.pages):
         issues.append(
-            ValidationIssue(code="story_count", message="STORY 页数与用户提纲不一致")
+            ValidationIssue(
+                code="story_count",
+                message="STORY slide count does not match the user outline",
+            )
         )
 
     for index, outline_page in enumerate(outline.pages):
@@ -55,7 +61,7 @@ def validate_presentation(
             issues.append(
                 ValidationIssue(
                     code="outline_fidelity",
-                    message=f"标题或页码偏离提纲：{story_page.title}",
+                    message=f"Slide number or title diverges from outline: {story_page.title}",
                     page=index + 1,
                 )
             )
@@ -63,7 +69,7 @@ def validate_presentation(
             issues.append(
                 ValidationIssue(
                     code="text_overflow_risk",
-                    message="正文超过 320 个字符，存在溢出风险",
+                    message="Body copy exceeds 320 characters and may overflow",
                     page=index + 1,
                 )
             )
@@ -73,7 +79,7 @@ def validate_presentation(
                 issues.append(
                     ValidationIssue(
                         code="missing_image",
-                        message=f"配图缺失：{story_page.image_id}",
+                        message=f"Missing artwork: {story_page.image_id}",
                         page=index + 1,
                     )
                 )
@@ -87,7 +93,7 @@ def validate_presentation(
             issues.append(
                 ValidationIssue(
                     code="missing_title",
-                    message=f"成品页缺少标题：{page.title}",
+                    message=f"Rendered slide is missing its title: {page.title}",
                     page=slide_index,
                 )
             )
@@ -97,7 +103,7 @@ def validate_presentation(
                     issues.append(
                         ValidationIssue(
                             code="missing_content",
-                            message=f"成品页缺少核心内容：{item}",
+                            message=f"Rendered slide is missing core content: {item}",
                             page=slide_index,
                         )
                     )
@@ -111,7 +117,7 @@ def validate_presentation(
                 issues.append(
                     ValidationIssue(
                         code="out_of_bounds",
-                        message="元素超出页面边界",
+                        message="An element extends beyond the slide boundary",
                         page=slide_index,
                     )
                 )
@@ -143,7 +149,10 @@ def validate_presentation(
             issues.append(
                 ValidationIssue(
                     code="palette_violation",
-                    message=f"发现色板外颜色：{', '.join(sorted(unexpected_colors))}",
+                    message=(
+                        "Found colors outside the approved palette: "
+                        f"{', '.join(sorted(unexpected_colors))}"
+                    ),
                     page=slide_index,
                 )
             )
@@ -153,7 +162,10 @@ def validate_presentation(
             issues.append(
                 ValidationIssue(
                     code="font_violation",
-                    message=f"发现 DESIGN 外字体：{', '.join(sorted(unexpected_fonts))}",
+                    message=(
+                        "Found fonts outside the DESIGN contract: "
+                        f"{', '.join(sorted(unexpected_fonts))}"
+                    ),
                     page=slide_index,
                 )
             )
@@ -167,7 +179,7 @@ def validate_presentation(
             issues.append(
                 ValidationIssue(
                     code="font_unavailable",
-                    message=f"系统未确认安装字体链：{' → '.join(chain)}",
+                    message=f"Font fallback chain is unavailable: {' → '.join(chain)}",
                     severity="warning",
                 )
             )
@@ -175,7 +187,7 @@ def validate_presentation(
         issues.append(
             ValidationIssue(
                 code="weak_palette",
-                message="色板区分度不足",
+                message="The approved palette has insufficient visual separation",
                 severity="warning",
             )
         )
@@ -278,16 +290,16 @@ def write_validation_report(report: ValidationReport, project_dir: Path) -> str:
     lines = [
         "# VALIDATION",
         "",
-        f"- 结果：{'通过' if report.valid else '未通过'}",
-        f"- 文件：{report.pptx_path}",
+        f"- Result: {'Passed' if report.valid else 'Failed'}",
+        f"- File: {report.pptx_path}",
         "",
-        "## 问题",
+        "## Issues",
     ]
     if report.issues:
         for issue in report.issues:
-            page = f"第 {issue.page} 页：" if issue.page else ""
+            page = f"Slide {issue.page}: " if issue.page else ""
             lines.append(f"- [{issue.severity}] {page}{issue.message} (`{issue.code}`)")
     else:
-        lines.append("- 无")
+        lines.append("- None")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(md_path.resolve())

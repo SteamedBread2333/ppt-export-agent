@@ -16,10 +16,10 @@ def write_contracts(project_dir: Path, pages: list[StoryPage], design: DesignSpe
         story_lines.extend(
             [
                 f"## {page.number}. {page.title}",
-                f"- 分部：{page.section or '未分部'}",
-                f"- 版式：{page.layout.value}",
-                f"- 配图：{page.image_id or '无'} — {page.visual_direction}",
-                "- 核心内容：",
+                f"- Section: {page.section or 'Unassigned'}",
+                f"- Layout: {page.layout.value}",
+                f"- Artwork: {page.image_id or 'None'} — {page.visual_direction}",
+                "- Core content:",
                 *[f"  - {item}" for item in page.content],
                 "",
             ]
@@ -29,23 +29,26 @@ def write_contracts(project_dir: Path, pages: list[StoryPage], design: DesignSpe
     design_lines = [
         "# DESIGN",
         "",
-        f"- 风格：{design.style_name}（{design.mood}）",
-        f"- 主色：{design.primary}",
-        f"- 辅色：{design.secondary}",
-        f"- 底色：{design.background}",
-        f"- 正文色：{design.text}",
-        f"- 强调色：{design.accent}",
+        f"- Direction: {design.style_name} ({design.mood})",
+        f"- Primary: {design.primary}",
+        f"- Secondary: {design.secondary}",
+        f"- Background: {design.background}",
+        f"- Text: {design.text}",
+        f"- Accent: {design.accent}",
         (
-            f"- 标题字体：{' → '.join([design.title_font, *design.title_font_fallbacks])}，"
+            f"- Title font: {' → '.join([design.title_font, *design.title_font_fallbacks])}, "
             f"{design.title_size}pt"
         ),
         (
-            f"- 正文字体：{' → '.join([design.body_font, *design.body_font_fallbacks])}，"
+            f"- Body font: {' → '.join([design.body_font, *design.body_font_fallbacks])}, "
             f"{design.body_size}pt"
         ),
-        f"- 配图规范：{design.illustration_style}",
-        f"- 禁止元素：{'、'.join(design.forbidden_elements)}",
-        "- 版式：Hero 约占 1/4；内容页以非对称图文布局为主，图片 55–60%。",
+        f"- Artwork direction: {design.illustration_style}",
+        f"- Prohibited elements: {', '.join(design.forbidden_elements)}",
+        (
+            "- Composition: hero slides occupy roughly 25%; content slides favor "
+            "asymmetric layouts with 55–60% imagery."
+        ),
         "",
     ]
     design_path.write_text("\n".join(design_lines), encoding="utf-8")

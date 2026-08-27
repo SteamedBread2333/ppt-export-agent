@@ -20,46 +20,78 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
     """Deterministic offline host used only by tests and `ppt-expert demo`."""
     if schema is OutlinePlan:
         return OutlinePlan(
-            title="PPT 大师演示",
-            audience="演示用户",
-            purpose="展示完整工作流",
+            title="PPT Expert Demo",
+            audience="Demo users",
+            purpose="Demonstrate the complete workflow",
             pages=[
-                OutlinePage(number=1, title="从想法到演示", core_content=["让表达更有力量"]),
+                OutlinePage(
+                    number=1,
+                    title="From Idea to Presentation",
+                    core_content=["Make every message more compelling"],
+                ),
                 OutlinePage(
                     number=2,
-                    title="清晰的叙事结构",
-                    core_content=["忠于提纲", "逐页建立视觉重点", "控制信息密度"],
+                    title="A Clear Narrative",
+                    core_content=[
+                        "Honor the source outline",
+                        "Create a focal point on every slide",
+                        "Control information density",
+                    ],
                 ),
                 OutlinePage(
                     number=3,
-                    title="设计与内容协同",
-                    core_content=["统一色板", "图文节奏", "自动校验"],
+                    title="Design and Content in Sync",
+                    core_content=["Unified palette", "Visual rhythm", "Automated validation"],
                 ),
-                OutlinePage(number=4, title="让每次分享更精彩", core_content=["完成并交付"]),
+                OutlinePage(
+                    number=4,
+                    title="Make Every Presentation Count",
+                    core_content=["Complete, validate, and deliver"],
+                ),
             ],
         )
     if schema is StyleOptions:
         return StyleOptions(
             options=[
                 StyleOption(
-                    key="A", name="暖阳叙事", mood="温暖、人文、亲和",
-                    primary="#E8603C", secondary="#F5C24B", background="#FFF8F0",
-                    text="#3D2B1F", accent="#3B8C88",
+                    key="A",
+                    name="Warm Narrative",
+                    mood="Warm, human, and approachable",
+                    primary="#E8603C",
+                    secondary="#F5C24B",
+                    background="#FFF8F0",
+                    text="#3D2B1F",
+                    accent="#3B8C88",
                 ),
                 StyleOption(
-                    key="B", name="深海商务", mood="理性、沉稳、可信",
-                    primary="#16324F", secondary="#2E6F95", background="#F4F8FB",
-                    text="#102A43", accent="#F29E4C",
+                    key="B",
+                    name="Deep Blue",
+                    mood="Measured, confident, and trustworthy",
+                    primary="#16324F",
+                    secondary="#2E6F95",
+                    background="#F4F8FB",
+                    text="#102A43",
+                    accent="#F29E4C",
                 ),
                 StyleOption(
-                    key="C", name="清新自然", mood="轻盈、生机、简洁",
-                    primary="#3A7D44", secondary="#A4C3A2", background="#F5FAF4",
-                    text="#24352A", accent="#E9A03B",
+                    key="C",
+                    name="Fresh Botanical",
+                    mood="Light, energetic, and minimal",
+                    primary="#3A7D44",
+                    secondary="#A4C3A2",
+                    background="#F5FAF4",
+                    text="#24352A",
+                    accent="#E9A03B",
                 ),
                 StyleOption(
-                    key="D", name="现代紫调", mood="创意、精致、未来",
-                    primary="#5B4B8A", secondary="#9B8FC4", background="#F8F6FC",
-                    text="#29243A", accent="#E06C9F",
+                    key="D",
+                    name="Modern Violet",
+                    mood="Creative, refined, and forward-looking",
+                    primary="#5B4B8A",
+                    secondary="#9B8FC4",
+                    background="#F8F6FC",
+                    text="#29243A",
+                    accent="#E06C9F",
                 ),
             ]
         )
@@ -67,47 +99,78 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
         return StoryDesignBundle(
             pages=[
                 StoryPage(
-                    number=1, title="从想法到演示", content=["让表达更有力量"],
-                    visual_direction="抽象光束汇聚成演示画面", layout=LayoutType.HERO,
+                    number=1,
+                    title="From Idea to Presentation",
+                    content=["Make every message more compelling"],
+                    visual_direction="Abstract beams converging into a presentation canvas",
+                    layout=LayoutType.HERO,
                     image_id="hero_open",
                 ),
                 StoryPage(
-                    number=2, title="清晰的叙事结构",
-                    content=["忠于提纲", "逐页建立视觉重点", "控制信息密度"],
-                    visual_direction="人物整理卡片和故事线", layout=LayoutType.LEFT_IMAGE,
+                    number=2,
+                    title="A Clear Narrative",
+                    content=[
+                        "Honor the source outline",
+                        "Create a focal point on every slide",
+                        "Control information density",
+                    ],
+                    visual_direction="A figure arranging cards along a narrative path",
+                    layout=LayoutType.LEFT_IMAGE,
                     image_id="story_flow",
                 ),
                 StoryPage(
-                    number=3, title="设计与内容协同",
-                    content=["统一色板", "图文节奏", "自动校验"],
-                    visual_direction="色彩、图片与文字模块协同", layout=LayoutType.DATA_CARDS,
+                    number=3,
+                    title="Design and Content in Sync",
+                    content=["Unified palette", "Visual rhythm", "Automated validation"],
+                    visual_direction="Color, imagery, and typography working as one system",
+                    layout=LayoutType.DATA_CARDS,
                 ),
                 StoryPage(
-                    number=4, title="让每次分享更精彩", content=["完成并交付"],
-                    visual_direction="舞台远景和向上的光", layout=LayoutType.HERO,
+                    number=4,
+                    title="Make Every Presentation Count",
+                    content=["Complete, validate, and deliver"],
+                    visual_direction="A distant stage with an ascending beam of light",
+                    layout=LayoutType.HERO,
                     image_id="hero_close",
                 ),
             ],
             design=DesignSpec(
-                style_name="暖阳叙事", mood="温暖、人文、亲和",
-                primary="#E8603C", secondary="#F5C24B", background="#FFF8F0",
-                text="#3D2B1F", accent="#3B8C88", illustration_style="现代温暖扁平插画",
+                style_name="Warm Narrative",
+                mood="Warm, human, and approachable",
+                primary="#E8603C",
+                secondary="#F5C24B",
+                background="#FFF8F0",
+                text="#3D2B1F",
+                accent="#3B8C88",
+                illustration_style="Contemporary warm flat illustration",
             ),
         )
     if schema is ImagePlan:
         return ImagePlan(
             images=[
                 ImageRequest(
-                    image_id="hero_open", page_numbers=[1],
-                    prompt="现代温暖扁平插画，抽象光束汇聚，无文字水印",
+                    image_id="hero_open",
+                    page_numbers=[1],
+                    prompt=(
+                        "Contemporary warm flat illustration, abstract beams converging, "
+                        "no text or watermarks"
+                    ),
                 ),
                 ImageRequest(
-                    image_id="story_flow", page_numbers=[2],
-                    prompt="现代温暖扁平插画，人物背影整理故事卡片，无文字水印",
+                    image_id="story_flow",
+                    page_numbers=[2],
+                    prompt=(
+                        "Contemporary warm flat illustration, rear-view figure arranging "
+                        "story cards, no text or watermarks"
+                    ),
                 ),
                 ImageRequest(
-                    image_id="hero_close", page_numbers=[4],
-                    prompt="现代温暖扁平插画，舞台远景，无文字水印",
+                    image_id="hero_close",
+                    page_numbers=[4],
+                    prompt=(
+                        "Contemporary warm flat illustration, distant stage, "
+                        "no text or watermarks"
+                    ),
                 ),
             ]
         )

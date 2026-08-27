@@ -45,13 +45,13 @@ def demo(
         config = AgentConfig(output_root=output, enable_libreoffice_preview=False)
         async with create_ppt_agent(runtime, config) as agent:
             result = await agent.start(
-                "制作一份展示 PPT 大师工作流的演示文稿",
+                "Create a presentation that demonstrates the PPT Expert workflow.",
                 template_path=template,
                 reference_images=reference_image or [],
             )
             request = result["request"]
             if request["type"] == "reference_confirmation":
-                typer.echo("参考内容与提取风格：")
+                typer.echo("References and extracted visual direction:")
                 for path in request["reference"]["preview_paths"]:
                     typer.echo(f"  {path}")
                 result = await agent.resume(
@@ -61,10 +61,12 @@ def demo(
                     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
                     return
                 request = result["request"]
-            typer.echo("风格预览：")
+            typer.echo("Visual direction previews:")
             for path in request["preview_paths"]:
                 typer.echo(f"  {path}")
-            choice = (style or typer.prompt("请选择风格 A/B/C/D", default="A")).upper()
+            choice = (
+                style or typer.prompt("Choose direction A/B/C/D", default="A")
+            ).upper()
             completed = await agent.resume(result["thread_id"], choice)
             typer.echo(json.dumps(completed, ensure_ascii=False, indent=2))
 
