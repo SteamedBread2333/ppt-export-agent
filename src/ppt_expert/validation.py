@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+import functools
+import platform
+import shutil
+import subprocess
+from pathlib import Path
+
+from pptx import Presentation
+from pptx.enum.dml import MSO_COLOR_TYPE, MSO_FILL_TYPE
+
+from ppt_expert.models import (
+    DesignSpec,
+    OutlinePlan,
+    StoryPage,
+    ValidationIssue,
+    ValidationReport,
+)
+
+
+def validate_presentation(
+    pptx_path: str | Path,
+    outline: OutlinePlan,
+    story: list[StoryPage],
+    design: DesignSpec,
+    image_paths: dict[str, str],
+) -> ValidationReport:
+    path = Path(pptx_path).expanduser().resolve()
+    issues: list[ValidationIssue] = []
+    if not path.exists():
+        return ValidationReport(
+            valid=False,
+            pptx_path=str(path),
+            issues=[ValidationIssue(code="missing_pptx", message="PPTX 文件不存在")],
+        )
+
+    presentation = Presentation(path)
+    if len(presentation.slides) != len(outline.pages):
+        issues.append(
+            ValidationIssue(
+                code="page_count",
+                message=f"页数应为 {len(outline.pages)}，实际为 {len(presentation.slides)}",
+            )
+        )
+    if len(story) != len(outline.pages):
+        issues.append(
+            ValidationIssue(code="story_count", message="STORY 页数与用户提纲不一致")
+        )
+
+    for index, outline_page in enumerate(outline.pages):
+        if index >= len(story):
+            break
+        story_page = story[index]
+        if story_page.number != outline_page.number or story_page.title != outline_page.title:
+            issues.append(
+                ValidationIssue(
+                    code="outline_fidelity",
+                    message=f"标题或页码偏离提纲：{story_page.title}",
+                    page=index + 1,
+                )
+            )
+        if sum(len(item) for item in story_page.content) > 320:
+            issues.append(
+                ValidationIssue(
+                    code="text_overflow_risk",
+                    message="正文超过 320 个字符，存在溢出风险",
+                    page=index + 1,
+                )
+            )
+        if story_page.image_id:
+            image_path = image_paths.get(story_page.image_id)
+            if not image_path or not Path(image_path).exists():
+                issues.append(
+                    ValidationIssue(
+                        code="missing_image",
+                        message=f"配图缺失：{story_page.image_id}",
+                        page=index + 1,
+                    )
+                )
+
+    for slide_index, slide in enumerate(presentation.slides, 1):
+        page = story[slide_index - 1] if slide_index <= len(story) else None
+        slide_text = "\n".join(
+            shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False)
+        )
+        if page and page.title not in slide_text:
+            issues.append(
+                ValidationIssue(
+                    code="missing_title",
+                    message=f"成品页缺少标题：{page.title}",
+                    page=slide_index,
+                )
+            )
+        if page:
+            for item in page.content:
+                if item not in slide_text:
+                    issues.append(
+                        ValidationIssue(
+                            code="missing_content",
+                            message=f"成品页缺少核心内容：{item}",
+                            page=slide_index,
+                        )
+                    )
+        for shape in slide.shapes:
+            if (
+                shape.left < 0
+                or shape.top < 0
+                or shape.left + shape.width > presentation.slide_width
+                or shape.top + shape.height > presentation.slide_height
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="out_of_bounds",
+                        message="元素超出页面边界",
+                        page=slide_index,
+                    )
+                )
+                break
+
+    palette = {
+        value.upper()
+        for value in [
+            design.primary,
+            design.secondary,
+            design.background,
+            design.text,
+            design.accent,
+            "#FFFFFF",
+        ]
+    }
+    allowed_fonts = {
+        font.casefold()
+        for font in [
+            design.title_font,
+            design.body_font,
+            *design.title_font_fallbacks,
+            *design.body_font_fallbacks,
+        ]
+    }
+    for slide_index, slide in enumerate(presentation.slides, 1):
+        unexpected_colors = _shape_colors(slide) - palette
+        if unexpected_colors:
+            issues.append(
+                ValidationIssue(
+                    code="palette_violation",
+                    message=f"发现色板外颜色：{', '.join(sorted(unexpected_colors))}",
+                    page=slide_index,
+                )
+            )
+        used_fonts = _shape_fonts(slide)
+        unexpected_fonts = {font for font in used_fonts if font.casefold() not in allowed_fonts}
+        if unexpected_fonts:
+            issues.append(
+                ValidationIssue(
+                    code="font_violation",
+                    message=f"发现 DESIGN 外字体：{', '.join(sorted(unexpected_fonts))}",
+                    page=slide_index,
+                )
+            )
+
+    font_chains = [
+        [design.title_font, *design.title_font_fallbacks],
+        [design.body_font, *design.body_font_fallbacks],
+    ]
+    for chain in font_chains:
+        if not any(_font_installed(font) for font in chain):
+            issues.append(
+                ValidationIssue(
+                    code="font_unavailable",
+                    message=f"系统未确认安装字体链：{' → '.join(chain)}",
+                    severity="warning",
+                )
+            )
+    if len(palette) < 4:
+        issues.append(
+            ValidationIssue(
+                code="weak_palette",
+                message="色板区分度不足",
+                severity="warning",
+            )
+        )
+    return ValidationReport(
+        valid=not any(issue.severity == "error" for issue in issues),
+        issues=issues,
+        pptx_path=str(path),
+    )
+
+
+def _shape_colors(slide) -> set[str]:
+    colors: set[str] = set()
+    for shape in slide.shapes:
+        fill = getattr(shape, "fill", None)
+        if fill is not None and fill.type == MSO_FILL_TYPE.SOLID:
+            color = fill.fore_color
+            if color.type == MSO_COLOR_TYPE.RGB:
+                colors.add(f"#{color.rgb}".upper())
+        if not getattr(shape, "has_text_frame", False):
+            continue
+        for paragraph in shape.text_frame.paragraphs:
+            if paragraph.font.color.type == MSO_COLOR_TYPE.RGB:
+                colors.add(f"#{paragraph.font.color.rgb}".upper())
+            for run in paragraph.runs:
+                if run.font.color.type == MSO_COLOR_TYPE.RGB:
+                    colors.add(f"#{run.font.color.rgb}".upper())
+    return colors
+
+
+def _shape_fonts(slide) -> set[str]:
+    fonts: set[str] = set()
+    for shape in slide.shapes:
+        if not getattr(shape, "has_text_frame", False):
+            continue
+        for paragraph in shape.text_frame.paragraphs:
+            if paragraph.font.name:
+                fonts.add(paragraph.font.name)
+            fonts.update(run.font.name for run in paragraph.runs if run.font.name)
+    return fonts
+
+
+@functools.lru_cache(maxsize=32)
+def _font_installed(font_family: str) -> bool:
+    normalized = _font_key(font_family)
+    fc_list = shutil.which("fc-list")
+    if fc_list:
+        result = subprocess.run(
+            [fc_list, ":", "family"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0 and normalized in _font_key(result.stdout):
+            return True
+    if platform.system() == "Darwin" and normalized in _font_key(_macos_font_catalog()):
+        return True
+    font_dirs = [
+        Path.home() / "Library/Fonts",
+        Path("/Library/Fonts"),
+        Path("/System/Library/Fonts"),
+        Path("C:/Windows/Fonts"),
+        Path("/usr/share/fonts"),
+        Path("/usr/local/share/fonts"),
+    ]
+    return any(
+        normalized in _font_key(path.stem)
+        for directory in font_dirs
+        if directory.exists()
+        for path in directory.rglob("*")
+        if path.is_file()
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def _macos_font_catalog() -> str:
+    profiler = shutil.which("system_profiler")
+    if profiler is None:
+        return ""
+    result = subprocess.run(
+        [profiler, "SPFontsDataType", "-json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _font_key(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum()).removesuffix(
+        "sc"
+    )
+
+
+def write_validation_report(report: ValidationReport, project_dir: Path) -> str:
+    json_path = project_dir / "validation.json"
+    md_path = project_dir / "VALIDATION.md"
+    json_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    lines = [
+        "# VALIDATION",
+        "",
+        f"- 结果：{'通过' if report.valid else '未通过'}",
+        f"- 文件：{report.pptx_path}",
+        "",
+        "## 问题",
+    ]
+    if report.issues:
+        for issue in report.issues:
+            page = f"第 {issue.page} 页：" if issue.page else ""
+            lines.append(f"- [{issue.severity}] {page}{issue.message} (`{issue.code}`)")
+    else:
+        lines.append("- 无")
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(md_path.resolve())

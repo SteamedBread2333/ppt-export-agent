@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ppt-expert-agent"
+version = "0.1.0"
+description = "Host-model-powered LangGraph agent for generating polished PPTX presentations"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite",
+  "cairosvg",
+  "langchain-core",
+  "langgraph",
+  "langgraph-checkpoint-sqlite",
+  "pillow",
+  "pydantic>=2",
+  "python-pptx",
+  "typer",
+  "watchdog",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[project.scripts]
+ppt-expert = "ppt_expert.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppt_expert"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
