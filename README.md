@@ -178,4 +178,6 @@ PNG 预览。缺少这些外部程序不影响 PPTX 交付。
   `with_structured_output(PydanticSchema)`；其他宿主通过 `structured_generate` 返回
   Pydantic 模型、字典或 JSON 字符串。
 - 图片工具接收 `ImageRequest` 和目标路径，返回图片 bytes、已有图片路径，或写入目标路径。
+- 图片工具即使把 JPEG 数据写进 `.png` 路径，或改写为同名 `.jpg/.jpeg/.webp`，
+  资产层也会用 Pillow 自动识别并规范化为真正的 PNG 后再交给渲染器。
 - `HostRuntime` 不进入 LangGraph checkpoint，SQLite 中只保存可序列化业务状态。

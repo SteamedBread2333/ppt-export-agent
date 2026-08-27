@@ -79,8 +79,8 @@ class HostRuntime:
             return output_path.resolve()
         if isinstance(result, (str, Path)):
             return Path(result).expanduser().resolve()
-        if result is None and output_path.exists():
-            return output_path.resolve()
+        if result is None:
+            return output_path.resolve() if output_path.exists() else None
         raise TypeError("Host image tool must return bytes, a path, or write output_path")
 
     @staticmethod

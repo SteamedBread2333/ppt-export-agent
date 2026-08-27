@@ -175,9 +175,17 @@ def _image_paths(project: Path, story: list[StoryPage]) -> dict[str, str]:
     assets = project / "assets"
     for page in story:
         if page.image_id and page.image_id not in image_paths:
-            matches = list(assets.glob(f"{page.image_id}_*.png"))
+            matches = sorted(
+                path
+                for path in assets.glob(f"{page.image_id}_*")
+                if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+            )
             if matches:
-                image_paths[page.image_id] = str(matches[0].resolve())
+                preferred = next(
+                    (path for path in matches if path.suffix.lower() == ".png"),
+                    matches[0],
+                )
+                image_paths[page.image_id] = str(preferred.resolve())
     return image_paths
 
 

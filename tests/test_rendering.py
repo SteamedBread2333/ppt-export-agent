@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -68,3 +69,40 @@ async def test_missing_host_image_tool_uses_palette_placeholder(tmp_path: Path) 
     assert generated.exists()
     with Image.open(generated) as image:
         assert image.size == (1536, 1024)
+
+
+@pytest.mark.asyncio
+async def test_jpeg_written_to_png_path_is_normalized(tmp_path: Path) -> None:
+    def write_disguised_jpeg(request, output_path):
+        image = Image.new("RGB", (64, 48), (220, 20, 30))
+        image.save(output_path, format="JPEG")
+        return output_path
+
+    request = ImageRequest(image_id="hero", page_numbers=[1], prompt="jpeg bytes")
+    runtime = HostRuntime(image_generate=write_disguised_jpeg)
+    paths = await generate_assets(runtime, [request], _design(), tmp_path)
+
+    generated = Path(paths["hero"])
+    assert generated.suffix == ".png"
+    with Image.open(generated) as image:
+        assert image.format == "PNG"
+        assert image.getpixel((32, 24))[0] > 180
+
+
+@pytest.mark.asyncio
+async def test_jpg_sibling_written_by_host_is_discovered_and_converted(tmp_path: Path) -> None:
+    def write_jpg_sibling(request, output_path):
+        jpeg_path = output_path.with_suffix(".jpg")
+        buffer = BytesIO()
+        Image.new("RGB", (80, 60), (15, 180, 60)).save(buffer, format="JPEG")
+        jpeg_path.write_bytes(buffer.getvalue())
+
+    request = ImageRequest(image_id="hero", page_numbers=[1], prompt="jpg sibling")
+    runtime = HostRuntime(image_generate=write_jpg_sibling)
+    paths = await generate_assets(runtime, [request], _design(), tmp_path)
+
+    generated = Path(paths["hero"])
+    assert generated.suffix == ".png"
+    with Image.open(generated) as image:
+        assert image.format == "PNG"
+        assert image.getpixel((40, 30))[1] > 140
