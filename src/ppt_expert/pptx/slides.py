@@ -76,7 +76,7 @@ def cover(canvas: Canvas, page: StoryPage, image_path: str | None = None) -> Non
         )
     kpis = page.kpis[:3]
     if kpis:
-        fill_kpis(canvas, kpis, page_metrics.mx, 4.12, inner, 1.45)
+        fill_kpis(canvas, kpis, page_metrics.mx, 4.12, inner, 1.45, page=page)
     implication(canvas, page.takeaway)
 
 
@@ -86,7 +86,7 @@ def overview(canvas: Canvas, page: StoryPage) -> None:
     inner = page_metrics.w - 2 * page_metrics.mx
     items = page.content[:4]
     height = 2.35 if page.kpis else 3.55
-    fill_claims(canvas, items, page_metrics.mx, top, inner, height, _on_claim(canvas))
+    fill_claims(canvas, items, page_metrics.mx, top, inner, height, _on_claim(canvas), page=page)
     if page.kpis:
         fill_kpis(
             canvas,
@@ -95,13 +95,14 @@ def overview(canvas: Canvas, page: StoryPage) -> None:
             top + height + 0.22,
             inner,
             1.28,
+            page=page,
         )
     implication(canvas, page.takeaway)
 
 
 def context(canvas: Canvas, page: StoryPage) -> None:
     top = header(canvas, page)
-    split = chart_rail(canvas, top, has_chart=bool(page.chart))
+    split = chart_rail(canvas, top, has_chart=bool(page.chart), page=page)
     if page.chart and split.chart:
         chart_base(canvas, page.chart, *split.chart)
     if split.divider == "vline":
@@ -133,6 +134,7 @@ def context(canvas: Canvas, page: StoryPage) -> None:
             rail_w,
             max(rail_top + rail_h - y, 0.8),
             _on_claim(canvas),
+            page=page,
         )
 
 
@@ -241,6 +243,7 @@ def expansion(canvas: Canvas, page: StoryPage) -> None:
         inner,
         page_metrics.implication_y - top - 0.18,
         _on_claim(canvas),
+        page=page,
         grid=True,
     )
     implication(canvas, page.takeaway)
@@ -256,7 +259,7 @@ def scenario(canvas: Canvas, page: StoryPage) -> None:
         return
     copy_h = 0.46 if page.content else 0.0
     height = page_metrics.implication_y - top - 0.18 - copy_h
-    fill_scenarios(canvas, columns, page_metrics.mx, top, inner, height)
+    fill_scenarios(canvas, columns, page_metrics.mx, top, inner, height, page=page)
     if page.content:
         _copy_band(canvas, page, page_metrics.implication_y - 0.62)
     implication(canvas, page.takeaway)

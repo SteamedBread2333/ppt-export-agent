@@ -31,6 +31,7 @@ class Canvas:
     tokens: DesignTokens
     dark: bool = False
     boxes: list[dict] = field(default_factory=list)
+    figure: str = ""
 
     @property
     def c(self):
