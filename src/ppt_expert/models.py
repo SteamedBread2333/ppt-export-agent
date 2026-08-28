@@ -157,11 +157,11 @@ class PageMetrics(BaseModel):
     w: float = 13.333
     h: float = 7.5
     mx: float = 0.62
-    header_nav_y: float = 0.32
-    header_title_y: float = 0.54
-    header_title_h: float = 0.42
-    header_rule_y: float = 0.98
-    content_top: float = 1.16
+    header_nav_y: float = 0.30
+    header_title_y: float = 0.52
+    header_title_h: float = 0.48
+    header_rule_y: float = 1.10
+    content_top: float = 1.42
     content_bottom: float = 6.72
     implication_y: float = 6.36
     footer_y: float = 7.12

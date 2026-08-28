@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.oxml.ns import qn
 from pptx.util import Inches
 
 from ppt_expert.assets import generate_assets
@@ -28,6 +29,7 @@ from ppt_expert.models import (
 )
 from ppt_expert.pptx import render_presentation
 from ppt_expert.recipes import tokens_for
+from ppt_expert.review import review_volume
 from ppt_expert.runtime import HostRuntime
 from ppt_expert.validation import validate_presentation
 
@@ -221,6 +223,14 @@ def test_chart_interpretation_sizes_copy_to_content(tmp_path: Path) -> None:
 
     assert report.valid is True, report.model_dump()
     assert takeaway.height < Inches(2.2)
+    chart = next(shape.chart for shape in Presentation(path).slides[0].shapes if shape.has_chart)
+    plot_area = chart._chartSpace.find(qn("c:chart")).find(qn("c:plotArea"))
+    sp_pr = plot_area.find(qn("c:spPr"))
+    assert sp_pr is not None
+    assert sp_pr.find(qn("a:noFill")) is not None
+    cat_ax = plot_area.find(qn("c:catAx"))
+    body_pr = cat_ax.find(qn("c:txPr")).find(qn("a:bodyPr"))
+    assert body_pr.get("rot") == "0"
 
 
 def test_header_rule_and_footer_are_locked(tmp_path: Path) -> None:
@@ -285,6 +295,15 @@ def test_header_rule_and_footer_are_locked(tmp_path: Path) -> None:
     assert len(set(footer_tops)) == 1
     assert header_tops
     assert len(set(header_tops)) == 1
+    overview_index_labels = [
+        round(shape.top.inches, 2)
+        for shape in presentation.slides[1].shapes
+        if getattr(shape, "has_text_frame", False)
+        and shape.text.strip() == "01"
+        and shape.top.inches < 3
+    ]
+    assert overview_index_labels
+    assert min(overview_index_labels) >= 1.45
 
 
 
@@ -370,3 +389,50 @@ def test_package_xml_has_notes_and_no_placeholders(tmp_path: Path) -> None:
         )
     assert notes
     assert not re.search(r"undefined|NaN|\[object", blob)
+
+
+def test_overview_and_context_fail_card_soup_review_if_tiled(tmp_path: Path) -> None:
+    pages = [
+        StoryPage(
+            number=1,
+            title="增长有底、盈利渐明：以杠铃结构穿越风格再平衡",
+            content=[
+                "增长换挡而非失速：名义增长 4.8%–5.2%",
+                "盈利底部渐明：非金融由 -2.1% 回升至 +6.5%",
+                "风格再平衡：拥挤度 96%→71%",
+            ],
+            visual_direction="Overview",
+            layout=LayoutType.DATA_CARDS,
+            family=SlideFamily.EXECUTIVE_SUMMARY,
+            role=PageRole.OVERVIEW,
+            takeaway="以杠铃结构穿越再平衡。",
+            speaker_notes="Overview",
+            kpis=[
+                KPIItem(value="4,150–4,600", label="沪深300", note="目标区间"),
+                KPIItem(value="+6.5%", label="盈利增速", note="2026E"),
+            ],
+        ),
+        StoryPage(
+            number=2,
+            title="增长换挡而非失速，政策托底意愿强于弹性",
+            content=["内需：社零 +4.6%", "外需：出口 +3.8%", "政策：赤字率 4.0%"],
+            visual_direction="PMI",
+            layout=LayoutType.TEXT,
+            family=SlideFamily.CHART_INTERPRETATION,
+            role=PageRole.CONTEXT,
+            takeaway="分子端修复依靠盈利回升，而非宏观杠杆重新扩张",
+            speaker_notes="Context",
+            chart=ChartSpec(
+                chart_type=ChartType.LINE,
+                title="制造业 / 非制造业 PMI",
+                categories=["24Q1", "24Q2", "25Q4"],
+                series=[ChartSeries(name="制造业 PMI", values=[50.0, 49.2, 50.1])],
+            ),
+        ),
+    ]
+    path = tmp_path / "taste.pptx"
+    render_presentation(pages, _design(), {}, path, AgentConfig())
+    review = review_volume(path, pages, tmp_path, visual_review="degraded")
+    codes = {issue.code for issue in review.issues}
+    assert "card_soup" not in codes
+    assert "cramped_header" not in codes

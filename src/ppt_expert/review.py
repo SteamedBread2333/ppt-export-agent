@@ -86,6 +86,7 @@ def review_volume(
         montage, pdf = render_montage(pptx_path, Path(project_dir) / "render", dpi=dpi)
     issues.extend(inspect_representatives(pptx_path, pages, representative))
     issues.extend(_numeric_conflicts(pages))
+    issues.extend(_aesthetic_geometry(presentation, pages))
     return VolumeReview(
         rhythm_ok=rhythm_ok,
         no_adjacent_repeat=not adjacent_repeat,
@@ -159,7 +160,12 @@ def inspect_representatives(
                     )
                 )
                 break
-            if getattr(shape, "has_text_frame", False) and "IMPLICATION" in (shape.text or ""):
+            if (
+                getattr(shape, "has_text_frame", False)
+                and page.takeaway
+                and page.takeaway[:10] in (shape.text or "")
+                and 6.1 <= shape.top.inches <= 6.75
+            ):
                 implication_top = shape.top.inches
             if 1.1 <= shape.top.inches <= 1.3 and shape.width.inches > 1.5:
                 xs.append(round(shape.left.inches, 2))
@@ -220,3 +226,87 @@ def _numeric_conflicts(pages: list[StoryPage]) -> list[QualityIssue]:
                 break
             seen[key] = item.value
     return issues
+
+
+def _aesthetic_geometry(presentation, pages: list[StoryPage]) -> list[QualityIssue]:
+    """Taste the montage can actually enforce: no card soup, title must breathe."""
+    issues: list[QualityIssue] = []
+    slide_w = presentation.slide_width
+    slide_h = presentation.slide_height
+    for index, page in enumerate(pages):
+        if index >= len(presentation.slides):
+            break
+        slide = presentation.slides[index]
+        role = page.resolved_role()
+        if role not in {PageRole.COVER, PageRole.CLOSE, PageRole.SCENARIO}:
+            cards = _filled_modules(slide, slide_w, slide_h)
+            if cards >= 2:
+                issues.append(
+                    QualityIssue(
+                        code="card_soup",
+                        message="The slide is a stack of filled tiles instead of type, rules, and numbers",
+                        page=page.number,
+                        severity="error",
+                        cause="Compose wrapped evidence in surface cards",
+                        repair_scope="slide",
+                        acceptance="Body pages use hairlines and hierarchy, not gray modules",
+                    )
+                )
+        if role not in {PageRole.COVER, PageRole.CLOSE} and _title_is_cramped(slide, page):
+            issues.append(
+                QualityIssue(
+                    code="cramped_header",
+                    message="Title band collides with the evidence; there is no pause after the rule",
+                    page=page.number,
+                    severity="error",
+                    cause="content_top sits on the header hairline",
+                    repair_scope="token",
+                    acceptance="At least 0.22in of air between the title box and the first content",
+                )
+            )
+    return issues
+
+
+def _filled_modules(slide, slide_w, slide_h) -> int:
+    from pptx.enum.dml import MSO_FILL_TYPE
+
+    count = 0
+    page_w = slide_w.inches
+    page_h = slide_h.inches
+    for shape in slide.shapes:
+        if getattr(shape, "has_chart", False) or getattr(shape, "has_table", False):
+            continue
+        width = shape.width.inches
+        height = shape.height.inches
+        if width >= page_w - 0.08 and height >= page_h - 0.08:
+            continue
+        if height < 0.5 or width < 1.6:
+            continue
+        fill = getattr(shape, "fill", None)
+        try:
+            if fill is None or fill.type != MSO_FILL_TYPE.SOLID:
+                continue
+        except (AttributeError, TypeError, ValueError):
+            continue
+        count += 1
+    return count
+
+
+def _title_is_cramped(slide, page: StoryPage) -> bool:
+    title_bottom = None
+    for shape in slide.shapes:
+        if getattr(shape, "has_text_frame", False) and page.title in (shape.text or ""):
+            title_bottom = shape.top.inches + min(shape.height.inches, 0.55)
+            break
+    if title_bottom is None:
+        return False
+    content_tops = []
+    for shape in slide.shapes:
+        top = shape.top.inches
+        height = shape.height.inches
+        if height < 0.05 or top <= title_bottom + 0.02 or top >= 6.9:
+            continue
+        content_tops.append(top)
+    if not content_tops:
+        return False
+    return min(content_tops) - title_bottom < 0.22

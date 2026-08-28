@@ -7,6 +7,7 @@ from ppt_expert.pptx.primitives import (
     Canvas,
     chart_base,
     footer,
+    hairline,
     header,
     implication,
     mini_label,
@@ -16,6 +17,7 @@ from ppt_expert.pptx.primitives import (
     stat_card,
     textbox,
     token,
+    vline,
 )
 
 
@@ -74,16 +76,13 @@ def cover(canvas: Canvas, page: StoryPage, image_path: str | None = None) -> Non
         )
     kpis = page.kpis[:3]
     if kpis:
-        width = (inner - 0.24 * (len(kpis) - 1)) / len(kpis)
+        width = (inner - 0.2 * (len(kpis) - 1)) / len(kpis)
+        hairline(canvas, page_metrics.mx, 4.02, inner)
         for index, item in enumerate(kpis):
-            stat_card(
-                canvas,
-                item,
-                page_metrics.mx + index * (width + 0.24),
-                4.15,
-                width,
-                1.55,
-            )
+            left = page_metrics.mx + index * (width + 0.2)
+            if index:
+                vline(canvas, left - 0.1, 4.18, 1.25)
+            stat_card(canvas, item, left, 4.12, width, 1.45)
     implication(canvas, page.takeaway)
 
 
@@ -93,25 +92,25 @@ def overview(canvas: Canvas, page: StoryPage) -> None:
     inner = page_metrics.w - 2 * page_metrics.mx
     items = page.content[:4]
     count = max(1, len(items))
-    gap = 0.16
-    width = (inner - gap * (count - 1)) / count
-    height = 2.6 if page.kpis else 3.4
+    width = inner / count
+    height = 2.35 if page.kpis else 3.55
     for index, item in enumerate(items):
-        left = page_metrics.mx + index * (width + gap)
-        panel(canvas, left, top, width, height)
-        mini_label(canvas, f"{index + 1:02d}", left + 0.16, top + 0.12, width - 0.28)
-        _claim(canvas, item, left + 0.16, top + 0.38, width - 0.28, height - 0.5)
+        left = page_metrics.mx + index * width
+        if index:
+            vline(canvas, left, top + 0.08, height - 0.2)
+        mini_label(canvas, f"{index + 1:02d}", left + 0.18, top + 0.06, width - 0.36, canvas.muted)
+        _claim(canvas, item, left + 0.18, top + 0.36, width - 0.4, height - 0.5)
     if page.kpis:
-        k_w = (inner - 0.16 * (len(page.kpis[:4]) - 1)) / len(page.kpis[:4])
-        for index, item in enumerate(page.kpis[:4]):
-            stat_card(
-                canvas,
-                item,
-                page_metrics.mx + index * (k_w + 0.16),
-                top + height + 0.18,
-                k_w,
-                1.45,
-            )
+        kpis = page.kpis[:4]
+        k_top = top + height + 0.22
+        k_h = 1.28
+        hairline(canvas, page_metrics.mx, k_top, inner)
+        k_w = inner / len(kpis)
+        for index, item in enumerate(kpis):
+            left = page_metrics.mx + index * k_w
+            if index:
+                vline(canvas, left, k_top + 0.16, k_h - 0.28)
+            stat_card(canvas, item, left + 0.12, k_top + 0.1, k_w - 0.2, k_h - 0.12)
     implication(canvas, page.takeaway)
 
 
@@ -119,44 +118,41 @@ def context(canvas: Canvas, page: StoryPage) -> None:
     top = header(canvas, page)
     page_metrics = canvas.p
     inner = page_metrics.w - 2 * page_metrics.mx
-    chart_w = inner * 0.62
+    band_h = page_metrics.implication_y - top - 0.22
+    chart_w = inner * 0.6
+    rail_left = page_metrics.mx + chart_w + 0.28
+    rail_w = inner - chart_w - 0.28
     if page.chart:
-        chart_base(canvas, page.chart, page_metrics.mx, top, chart_w, 4.35)
-    rail_left = page_metrics.mx + chart_w + 0.18
-    rail_w = inner - chart_w - 0.18
+        chart_base(canvas, page.chart, page_metrics.mx, top, chart_w, band_h)
+        vline(canvas, page_metrics.mx + chart_w + 0.12, top + 0.06, band_h - 0.12)
+    else:
+        rail_left = page_metrics.mx
+        rail_w = inner
     y = top
     if page.takeaway:
-        panel(canvas, rail_left, y, rail_w, 1.25, accent_bar="top")
+        take_h = 1.05
         textbox(
             canvas,
             page.takeaway,
-            rail_left + 0.14,
-            y + 0.16,
-            rail_w - 0.28,
-            0.95,
-            14,
+            rail_left,
+            y,
+            rail_w,
+            take_h - 0.12,
+            16,
             canvas.ink,
             bold=True,
         )
-        y += 1.37
+        y += take_h
+        hairline(canvas, rail_left, y, rail_w)
+        y += 0.16
     remaining = list(page.content[:4])
+    rows = max(len(remaining), 1)
+    row_h = max(0.72, (top + band_h - y) / rows)
     for index, item in enumerate(remaining):
-        h = min(1.05, page_metrics.content_bottom - y)
-        if h < 0.7:
-            textbox(
-                canvas,
-                " · ".join(remaining[index:]),
-                rail_left + 0.08,
-                min(y, page_metrics.content_bottom - 0.4),
-                rail_w - 0.16,
-                0.38,
-                12,
-                canvas.ink2,
-            )
-            break
-        panel(canvas, rail_left, y, rail_w, h)
-        _claim(canvas, item, rail_left + 0.14, y + 0.1, rail_w - 0.28, h - 0.16)
-        y += h + 0.1
+        _claim(canvas, item, rail_left, y + 0.04, rail_w, row_h - 0.12)
+        y += row_h
+        if index < len(remaining) - 1:
+            hairline(canvas, rail_left, y, rail_w)
 
 
 def evidence(canvas: Canvas, page: StoryPage) -> None:
@@ -264,16 +260,18 @@ def expansion(canvas: Canvas, page: StoryPage) -> None:
     else:
         cells = [(index, 0) for index in range(count)]
         cols, rows = count, 1
-    gap = 0.16
-    col_w = (inner - gap * (cols - 1)) / cols
-    row_h = min(2.45 if rows == 2 else 3.35, (page_metrics.implication_y - top - 0.2 - gap * (rows - 1)) / rows)
+    col_w = inner / cols
+    row_h = min(2.5 if rows == 2 else 3.4, (page_metrics.implication_y - top - 0.18) / rows)
+    if rows == 2:
+        hairline(canvas, page_metrics.mx, top + row_h, inner)
+    if cols == 2:
+        vline(canvas, page_metrics.mx + col_w, top + 0.06, row_h * rows - 0.12)
     for index, item in enumerate(items):
         column, row = cells[index]
-        left = page_metrics.mx + column * (col_w + gap)
-        card_top = top + row * (row_h + gap)
-        panel(canvas, left, card_top, col_w, row_h)
-        mini_label(canvas, f"{index + 1:02d}", left + 0.16, card_top + 0.1, col_w - 0.28)
-        _claim(canvas, item, left + 0.16, card_top + 0.34, col_w - 0.28, row_h - 0.46)
+        left = page_metrics.mx + column * col_w
+        card_top = top + row * row_h
+        mini_label(canvas, f"{index + 1:02d}", left + 0.18, card_top + 0.12, col_w - 0.36, canvas.muted)
+        _claim(canvas, item, left + 0.18, card_top + 0.4, col_w - 0.4, row_h - 0.58)
     implication(canvas, page.takeaway)
 
 
@@ -291,11 +289,15 @@ def scenario(canvas: Canvas, page: StoryPage) -> None:
     height = page_metrics.implication_y - top - 0.18 - copy_h
     for index, column in enumerate(columns):
         left = page_metrics.mx + index * (width + gap)
-        fill = canvas.c.accent if column.featured else canvas.surface
+        fill = canvas.c.accent if column.featured else None
         ink = "#FFFFFF" if column.featured else canvas.ink
         muted = canvas.c.dark_muted if column.featured else canvas.muted
-        rect(canvas, left, top, width, height, fill, rounded=True)
-        textbox(canvas, column.name, left + 0.14, top + 0.16, width - 0.28, 0.36, 16, ink, bold=True)
+        if fill:
+            rect(canvas, left, top, width, height, fill)
+        else:
+            if index:
+                vline(canvas, left - gap / 2, top + 0.1, height - 0.2)
+        textbox(canvas, column.name, left + 0.16, top + 0.18, width - 0.32, 0.36, 16, ink, bold=True)
         token(canvas, column.probability, left + 0.14, top + 0.54, width - 0.28, 0.3, 13, muted)
         body = "\n".join(part for part in (column.trigger, column.outcome, column.implication) if part)
         textbox(canvas, body, left + 0.14, top + 0.96, width - 0.28, height - 1.15, 13, ink)
@@ -312,9 +314,8 @@ def close(canvas: Canvas, page: StoryPage) -> None:
     textbox(canvas, page.title, page_metrics.mx, 1.75, inner, 1.15, 30, canvas.ink, bold=True)
     y = 3.15
     for item in page.content:
-        panel(canvas, page_metrics.mx, y, inner, 0.7)
-        textbox(canvas, item, page_metrics.mx + 0.2, y + 0.16, inner - 0.4, 0.42, 16, canvas.ink)
-        y += 0.82
+        textbox(canvas, item, page_metrics.mx, y, inner, 0.5, 18, canvas.ink)
+        y += 0.62
     if page.milestones:
         from ppt_expert.pptx.primitives import hairline
 
@@ -351,15 +352,15 @@ def _claim(canvas: Canvas, item: str, left, top, width, height) -> None:
     if colon < 0:
         colon = item.find(":")
     if colon < 1 or colon > 18:
-        textbox(canvas, item, left, top, width, height, 13, canvas.ink)
+        textbox(canvas, item, left, top, width, height, 15, canvas.ink)
         return
     label, rest = item[: colon + 1], item[colon + 1 :]
-    textbox(canvas, label, left, top, width, 0.32, 15, canvas.ink, bold=True)
+    textbox(canvas, label, left, top, width, 0.36, 16, canvas.ink, bold=True)
     risk_at = rest.find("风险")
     if risk_at < 0:
-        textbox(canvas, rest, left, top + 0.34, width, height - 0.36, 13, canvas.ink2)
+        textbox(canvas, rest, left, top + 0.4, width, height - 0.42, 14, canvas.ink2)
         return
-    textbox(canvas, rest[:risk_at], left, top + 0.34, width, max(0.4, height - 0.82), 13, canvas.ink2)
+    textbox(canvas, rest[:risk_at], left, top + 0.4, width, max(0.4, height - 0.88), 13, canvas.ink2)
     textbox(
         canvas,
         rest[risk_at:],

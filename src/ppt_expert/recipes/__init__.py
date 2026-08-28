@@ -83,8 +83,8 @@ def build_style_brief(intent: IntentSlots, recipe_id: RecipeId, mixing_note: str
         ),
         image_behavior=tokens.image_behavior,
         spatial_rhythm=(
-            "Margin 0.62in; title band completes by 10–13%; evidence to 88–92%; "
-            "implication hugs the folio; header rule and footer y are locked."
+            "Margin 0.62in; title band then a clear pause before evidence; "
+            "content to 88–92%; implication hugs the folio; header rule and footer y are locked."
         ),
         recipe_id=recipe_id,
         visual_proposition=tokens.visual_proposition,

@@ -237,19 +237,29 @@ def build_graph(checkpointer):
         )
         return {"review": review.model_dump(mode="json"), "montage_path": review.montage_path}
 
-    def inspect_reps(state: PPTAgentState) -> dict:
+    async def inspect_reps(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
         env = EnvironmentReport.model_validate(state.get("environment") or {})
         review = VolumeReview.model_validate(state.get("review") or {})
+        project = Path(state["project_dir"])
         if env.visual_review == "full" and review.pdf_path and review.representative_pages:
             from ppt_expert.preview import render_representative_pages
 
             render_representative_pages(
                 review.pdf_path,
-                Path(state["project_dir"]) / "render",
+                project / "render",
                 review.representative_pages,
                 dpi=130,
             )
-        return {}
+        from ppt_expert.vision import critique_montage
+
+        extra = await critique_montage(
+            runtime.context.host,
+            [path for path in [review.montage_path] if path],
+        )
+        if extra:
+            review.issues.extend(extra)
+            (project / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
+        return {"review": review.model_dump(mode="json")}
 
     def route_review(state: PPTAgentState, runtime: Runtime[GraphContext]) -> str:
         review = VolumeReview.model_validate(state.get("review") or {})

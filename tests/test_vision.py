@@ -11,7 +11,7 @@ from ppt_expert.models import (
 )
 from ppt_expert.quality import score_deck
 from ppt_expert.runtime import HostRuntime
-from ppt_expert.vision import apply_vision_review
+from ppt_expert.vision import apply_vision_review, critique_montage
 
 
 def _pages() -> list[StoryPage]:
@@ -69,3 +69,27 @@ async def test_vision_review_merges_conservative_score(tmp_path) -> None:
     assert merged.vision_review == "completed"
     assert any(issue.code == "weak_whitespace" for issue in merged.warnings)
     assert "rendered_visual" in merged.dimensions
+
+
+@pytest.mark.asyncio
+async def test_montage_critique_is_advisory_not_a_repair_loop() -> None:
+    host = HostRuntime(
+        critique_images=lambda prompt, paths, schema: VisionCritique(
+            score=40,
+            issues=[
+                QualityIssue(
+                    code="card_soup",
+                    message="Gray tiles",
+                    page=2,
+                    severity="error",
+                    cause="Filled modules",
+                    repair_scope="slide",
+                    acceptance="Type and hairlines",
+                )
+            ],
+        )
+    )
+    issues = await critique_montage(host, ["montage.png"])
+    assert issues
+    assert issues[0].code == "card_soup"
+    assert issues[0].severity == "warning"

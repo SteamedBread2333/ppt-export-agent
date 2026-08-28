@@ -13,7 +13,29 @@ severity, observed problem, probable cause, repair scope, and a measurable
 acceptance condition. Do not give vague advice such as "make it more professional".
 Evaluate five-second comprehension, evidence prominence, alignment, whitespace,
 contrast, density, chart legibility, and template repetition.
+
+Reject these as ugly, not as style:
+- stacked gray cards with accent bars (card soup)
+- title hairline colliding with the first module
+- default Excel chart walls and rotated date clutter
+- IMPLICATION / KPI chrome boxes that repeat on every slide
+- adjacent pages that share the same tiled silhouette
 """
+
+
+async def critique_montage(host: HostRuntime, image_paths: Sequence[str]) -> list[QualityIssue]:
+    if host.critique_images is None or not image_paths:
+        return []
+    try:
+        result = host.critique_images(VISION_PROMPT, list(image_paths), VisionCritique)
+        result = await result if inspect.isawaitable(result) else result
+        # Montage taste cannot be repaired by rewriting copy; surface it, do not loop.
+        return [
+            issue.model_copy(update={"severity": "warning"})
+            for issue in _coerce_critique(result).issues
+        ]
+    except Exception:  # noqa: BLE001
+        return []
 
 
 async def apply_vision_review(

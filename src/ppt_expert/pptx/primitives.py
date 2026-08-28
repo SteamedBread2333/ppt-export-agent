@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from lxml import etree
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_MARKER_STYLE, XL_TICK_MARK
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.ns import qn
@@ -88,7 +88,7 @@ def _clamp(canvas: Canvas, left: float, top: float, width: float, height: float)
     return left, top, max(width, 0.01), max(height, 0.01)
 
 
-def rect(canvas: Canvas, left, top, width, height, color: str, rounded=False):
+def rect(canvas: Canvas, left, top, width, height, color: str, rounded=False, stroke: str | None = None):
     left, top, width, height = _clamp(canvas, left, top, width, height)
     kind = MSO_SHAPE.ROUNDED_RECTANGLE if rounded else MSO_SHAPE.RECTANGLE
     shape = canvas.slide.shapes.add_shape(
@@ -96,7 +96,11 @@ def rect(canvas: Canvas, left, top, width, height, color: str, rounded=False):
     )
     shape.fill.solid()
     shape.fill.fore_color.rgb = rgb(color)
-    shape.line.fill.background()
+    if stroke:
+        shape.line.color.rgb = rgb(stroke)
+        shape.line.width = Pt(0.75)
+    else:
+        shape.line.fill.background()
     return shape
 
 
@@ -249,12 +253,12 @@ def footer(canvas: Canvas, page: StoryPage) -> None:
     )
 
 
-def panel(canvas: Canvas, left, top, width, height, *, accent_bar: str | None = "left") -> None:
-    rect(canvas, left, top, width, height, canvas.surface, rounded=True)
+def panel(canvas: Canvas, left, top, width, height, *, accent_bar: str | None = None) -> None:
+    rect(canvas, left, top, width, height, canvas.surface, stroke=canvas.hairline_color)
     if accent_bar == "left":
-        rect(canvas, left, top, 0.07, height, canvas.accent)
+        rect(canvas, left, top, 0.045, height, canvas.accent)
     elif accent_bar == "top":
-        rect(canvas, left, top, width, 0.05, canvas.accent)
+        rect(canvas, left, top, width, 0.03, canvas.accent)
 
 
 def implication(canvas: Canvas, text: str) -> None:
@@ -262,33 +266,25 @@ def implication(canvas: Canvas, text: str) -> None:
         return
     page_metrics = canvas.p
     inner = page_metrics.w - 2 * page_metrics.mx
-    panel(canvas, page_metrics.mx, page_metrics.implication_y, inner, 0.58, accent_bar="left")
-    mini_label(
-        canvas,
-        "IMPLICATION",
-        page_metrics.mx + 0.18,
-        page_metrics.implication_y + 0.06,
-        2.2,
-    )
+    hairline(canvas, page_metrics.mx, page_metrics.implication_y, inner)
     textbox(
         canvas,
         text,
-        page_metrics.mx + 0.18,
-        page_metrics.implication_y + 0.24,
-        inner - 0.36,
-        0.3,
-        13,
+        page_metrics.mx,
+        page_metrics.implication_y + 0.12,
+        inner,
+        0.4,
+        15,
         canvas.ink,
         bold=True,
     )
 
 
 def stat_card(canvas: Canvas, item: KPIItem, left, top, width, height) -> None:
-    panel(canvas, left, top, width, height, accent_bar="left")
-    token(canvas, item.value, left + 0.18, top + 0.16, width - 0.3, 0.5, 24, canvas.accent)
-    textbox(canvas, item.label, left + 0.18, top + 0.7, width - 0.3, 0.28, 13, canvas.ink, bold=True)
+    token(canvas, item.value, left + 0.04, top + 0.08, width - 0.1, 0.56, 28, canvas.accent)
+    textbox(canvas, item.label, left + 0.04, top + 0.68, width - 0.1, 0.26, 12, canvas.ink, bold=True)
     if item.note:
-        textbox(canvas, item.note, left + 0.18, top + 1.02, width - 0.3, 0.28, 11, canvas.muted)
+        textbox(canvas, item.note, left + 0.04, top + 0.94, width - 0.1, 0.26, 11, canvas.muted)
 
 
 def progress(canvas: Canvas, left, top, width, height, percent: float, color: str | None = None) -> None:
@@ -322,6 +318,19 @@ def motif(canvas: Canvas) -> None:
 
 
 def chart_base(canvas: Canvas, spec: ChartSpec, left, top, width, height) -> None:
+    title_band = 0.28 if spec.title else 0.04
+    if spec.title:
+        textbox(
+            canvas,
+            spec.title,
+            left,
+            top,
+            width,
+            0.24,
+            11,
+            canvas.muted,
+            bold=True,
+        )
     data = CategoryChartData()
     data.categories = spec.categories
     for series in spec.series:
@@ -329,9 +338,9 @@ def chart_base(canvas: Canvas, spec: ChartSpec, left, top, width, height) -> Non
     frame = canvas.slide.shapes.add_chart(
         CHART_TYPES[spec.chart_type],
         Inches(left),
-        Inches(top),
-        Inches(width),
-        Inches(height),
+        Inches(top + title_band),
+        Inches(max(width, 0.8)),
+        Inches(max(height - title_band, 0.8)),
         data,
     )
     chart = frame.chart
@@ -339,9 +348,12 @@ def chart_base(canvas: Canvas, spec: ChartSpec, left, top, width, height) -> Non
     if chart.has_legend:
         chart.legend.include_in_layout = False
         chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-    if spec.title:
-        chart.has_title = True
-        chart.chart_title.text_frame.text = spec.title
+        try:
+            chart.legend.font.size = Pt(9)
+            chart.legend.font.color.rgb = rgb(canvas.muted)
+        except (ValueError, AttributeError):
+            pass
+    chart.has_title = False
     palette = [canvas.c.accent, canvas.c.positive, canvas.c.caution, canvas.c.ink2]
     for index, series in enumerate(chart.series):
         color = palette[index % len(palette)]
@@ -352,14 +364,150 @@ def chart_base(canvas: Canvas, spec: ChartSpec, left, top, width, height) -> Non
         else:
             try:
                 series.format.line.color.rgb = rgb(color)
+                series.format.line.width = Pt(2.0)
+                series.smooth = False
+                series.marker.style = XL_MARKER_STYLE.CIRCLE
+                series.marker.size = 6
+                series.marker.format.fill.solid()
+                series.marker.format.fill.fore_color.rgb = rgb(color)
+                series.marker.format.line.fill.background()
             except ValueError:
                 series.format.fill.solid()
                 series.format.fill.fore_color.rgb = rgb(color)
     try:
-        chart.value_axis.has_major_gridlines = False
-        chart.value_axis.has_minor_gridlines = False
-    except ValueError:
+        if spec.chart_type in {ChartType.COLUMN, ChartType.BAR}:
+            chart.plots[0].gap_width = 70
+    except (IndexError, ValueError, AttributeError):
         pass
+    try:
+        _consulting_value_axis(chart.value_axis, canvas)
+        _consulting_category_axis(chart.category_axis, canvas, len(spec.categories))
+    except (ValueError, AttributeError):
+        pass
+    _strip_chart_chrome(chart)
+
+
+def _consulting_value_axis(axis, canvas: Canvas) -> None:
+    axis.has_minor_gridlines = False
+    axis.has_major_gridlines = True
+    try:
+        axis.major_tick_mark = XL_TICK_MARK.NONE
+        axis.minor_tick_mark = XL_TICK_MARK.NONE
+    except (ValueError, AttributeError):
+        pass
+    _chart_ticks(axis, canvas)
+    _axis_line(axis, None)
+    _style_gridlines(axis, canvas.hairline_color)
+
+
+def _consulting_category_axis(axis, canvas: Canvas, n_cats: int) -> None:
+    axis.has_major_gridlines = False
+    axis.has_minor_gridlines = False
+    try:
+        axis.major_tick_mark = XL_TICK_MARK.NONE
+        axis.minor_tick_mark = XL_TICK_MARK.NONE
+    except (ValueError, AttributeError):
+        pass
+    _chart_ticks(axis, canvas)
+    _axis_line(axis, canvas.hairline_color)
+    if n_cats > 8:
+        skip = max(1, (n_cats + 7) // 8)
+        node = axis._element.find(qn("c:tickLblSkip"))
+        if node is None:
+            node = etree.SubElement(axis._element, qn("c:tickLblSkip"))
+        node.set("val", str(skip))
+
+
+def _chart_ticks(axis, canvas: Canvas) -> None:
+    labels = axis.tick_labels
+    labels.font.size = Pt(9)
+    labels.font.color.rgb = rgb(canvas.muted)
+    labels.font.name = canvas.f.num
+    tx_pr = axis._element.find(qn("c:txPr"))
+    if tx_pr is None:
+        return
+    body_pr = tx_pr.find(qn("a:bodyPr"))
+    if body_pr is None:
+        body_pr = etree.Element(qn("a:bodyPr"))
+        tx_pr.insert(0, body_pr)
+    body_pr.set("rot", "0")
+    body_pr.set("vert", "horz")
+    for def_rpr in tx_pr.iter(qn("a:defRPr")):
+        _typeface(def_rpr, canvas.f.num, canvas.f.cn)
+
+
+def _typeface(r_pr, latin: str, east: str) -> None:
+    for tag, typeface in (("a:latin", latin), ("a:ea", east), ("a:cs", latin)):
+        element = r_pr.find(qn(tag))
+        if element is None:
+            element = etree.SubElement(r_pr, qn(tag))
+        element.set("typeface", typeface)
+
+
+def _axis_line(axis, color: str | None) -> None:
+    sp_pr = axis._element.find(qn("c:spPr"))
+    if sp_pr is None:
+        sp_pr = etree.SubElement(axis._element, qn("c:spPr"))
+    for line in sp_pr.findall(qn("a:ln")):
+        sp_pr.remove(line)
+    line = etree.SubElement(sp_pr, qn("a:ln"))
+    if color is None:
+        etree.SubElement(line, qn("a:noFill"))
+        return
+    line.set("w", "6350")
+    fill = etree.SubElement(line, qn("a:solidFill"))
+    srgb = etree.SubElement(fill, qn("a:srgbClr"))
+    srgb.set("val", color.lstrip("#").upper())
+
+
+def _style_gridlines(axis, color: str) -> None:
+    grid = axis._element.find(qn("c:majorGridlines"))
+    if grid is None:
+        grid = etree.SubElement(axis._element, qn("c:majorGridlines"))
+    _hairline_stroke(grid, color)
+
+
+def _hairline_stroke(parent, color: str) -> None:
+    sp_pr = parent.find(qn("c:spPr"))
+    if sp_pr is None:
+        sp_pr = etree.SubElement(parent, qn("c:spPr"))
+    for line in sp_pr.findall(qn("a:ln")):
+        sp_pr.remove(line)
+    line = etree.SubElement(sp_pr, qn("a:ln"))
+    line.set("w", "6350")
+    fill = etree.SubElement(line, qn("a:solidFill"))
+    srgb = etree.SubElement(fill, qn("a:srgbClr"))
+    srgb.set("val", color.lstrip("#").upper())
+
+
+def _strip_chart_chrome(chart) -> None:
+    space = getattr(chart, "_chartSpace", None)
+    if space is None:
+        return
+    _sp_pr_no_fill(space)
+    style = space.find(qn("c:style"))
+    if style is not None:
+        style.set("val", "1")
+    plot = space.find(qn("c:chart"))
+    if plot is None:
+        return
+    area = plot.find(qn("c:plotArea"))
+    if area is not None:
+        _sp_pr_no_fill(area)
+
+
+def _sp_pr_no_fill(parent) -> None:
+    sp_pr = parent.find(qn("c:spPr"))
+    if sp_pr is None:
+        sp_pr = etree.SubElement(parent, qn("c:spPr"))
+    for tag in ("a:solidFill", "a:noFill", "a:gradFill", "a:pattFill"):
+        for node in sp_pr.findall(qn(tag)):
+            sp_pr.remove(node)
+    etree.SubElement(sp_pr, qn("a:noFill"))
+    for line in sp_pr.findall(qn("a:ln")):
+        sp_pr.remove(line)
+    line = etree.SubElement(sp_pr, qn("a:ln"))
+    etree.SubElement(line, qn("a:noFill"))
 
 
 def speaker_notes(slide, page: StoryPage) -> None:
