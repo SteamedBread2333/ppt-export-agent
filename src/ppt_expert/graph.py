@@ -9,299 +9,256 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
 from ppt_expert.assets import generate_assets
-from ppt_expert.audition import render_contact_sheet, render_style_auditions
-from ppt_expert.composition import choose_compositions
 from ppt_expert.documents import write_contracts
 from ppt_expert.enrichment import enrich_story
+from ppt_expert.environment import survey_environment, write_environment
+from ppt_expert.guards import inspect_guards, write_guard_report
 from ppt_expert.models import (
     ArtifactBundle,
-    DeckBrief,
     DesignSpec,
-    EvidenceBundle,
-    EvidenceItem,
-    ImagePlan,
+    DesignTokens,
+    EnvironmentReport,
+    GuardReport,
     ImageRequest,
-    LayoutType,
+    IntentSlots,
     OutlinePlan,
+    PageRole,
     PPTAgentState,
-    QualityReport,
-    ReferenceAnalysis,
-    SlideFamily,
+    RecipeId,
     StoryDesignBundle,
     StoryPage,
-    StyleOption,
-    StyleOptions,
-    TypographyProfile,
+    StyleBrief,
     ValidationReport,
+    VolumeReview,
 )
-from ppt_expert.planning import attach_evidence, build_brief, extract_evidence
+from ppt_expert.planning import attach_evidence, extract_evidence
 from ppt_expert.pptx import render_presentation
-from ppt_expert.preview import render_previews
-from ppt_expert.prompts import (
-    image_plan_prompt,
-    outline_prompt,
-    repair_prompt,
-    story_design_prompt,
-    styles_prompt,
-)
-from ppt_expert.quality import score_deck, write_quality_report
-from ppt_expert.references import analyze_references
+from ppt_expert.preview import cleanup_render_intermediates
+from ppt_expert.prompts import intent_prompt, outline_prompt, repair_prompt, story_design_prompt
+from ppt_expert.recipes import FOUNDATIONS, build_style_brief, match_recipe, tokens_for
 from ppt_expert.repair import merge_repaired_pages
+from ppt_expert.review import review_volume
 from ppt_expert.runtime import GraphContext
-from ppt_expert.style_preview import render_style_cards
 from ppt_expert.telemetry import prompt_tokens, record_metric
-from ppt_expert.typography import build_profiles, render_specimens, select_profile
 from ppt_expert.validation import validate_presentation, write_validation_report
-from ppt_expert.vision import apply_vision_review
 
 
 def build_graph(checkpointer):
-    async def parse_outline(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> dict:
-        outline = await _generate(
-            runtime, outline_prompt(state["request"]), OutlinePlan, state, "parse_outline"
+    async def parse_intent(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
+        intent = await _generate(
+            runtime, intent_prompt(state["request"]), IntentSlots, state, "parse_intent"
         )
-        brief = build_brief(outline, state["request"])
+        outline = await _generate(
+            runtime,
+            outline_prompt(state["request"], intent.model_dump(mode="json")),
+            OutlinePlan,
+            state,
+            "parse_outline",
+        )
         evidence = extract_evidence(outline)
-        project_dir = Path(state["project_dir"])
-        (project_dir / "outline.json").write_text(
+        project = Path(state["project_dir"])
+        (project / "intent.json").write_text(intent.model_dump_json(indent=2), encoding="utf-8")
+        (project / "foundations.json").write_text(
+            json.dumps(FOUNDATIONS, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (project / "outline.json").write_text(
             json.dumps(outline.model_dump(mode="json"), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        (project_dir / "brief.json").write_text(brief.model_dump_json(indent=2), encoding="utf-8")
-        (project_dir / "evidence.json").write_text(
-            evidence.model_dump_json(indent=2), encoding="utf-8"
-        )
         return {
+            "intent": intent.model_dump(mode="json"),
             "outline": outline.model_dump(mode="json"),
-            "brief": brief.model_dump(mode="json"),
             "evidence": [item.model_dump(mode="json") for item in evidence.items],
             "repair_attempts": 0,
         }
 
-    def route_brief(state: PPTAgentState) -> str:
-        brief = DeckBrief.model_validate(state.get("brief") or {"objective": "draft"})
-        return "confirm_brief" if brief.needs_confirmation() else "inspect_references"
+    def route_intent(state: PPTAgentState) -> str:
+        intent = IntentSlots.model_validate(state["intent"])
+        return "confirm_intent" if intent.needs_confirmation() else "match_recipe"
 
-    def confirm_brief(state: PPTAgentState) -> dict:
-        brief = DeckBrief.model_validate(state["brief"])
+    def confirm_intent(state: PPTAgentState) -> dict:
+        intent = IntentSlots.model_validate(state["intent"])
         response = interrupt(
             {
-                "type": "brief_confirmation",
-                "message": "Audience or objective is incomplete. Confirm or edit the brief.",
-                "brief": brief.model_dump(mode="json"),
+                "type": "intent_confirmation",
+                "message": "Topic, audience, or objective is incomplete.",
+                "intent": intent.model_dump(mode="json"),
                 "actions": ["continue", "edit"],
             }
         )
         payload = response if isinstance(response, dict) else {"action": str(response)}
-        action = str(payload.get("action", "continue")).strip().lower()
-        if action in {"continue", "ok", "use"}:
+        if str(payload.get("action", "continue")).lower() in {"continue", "ok", "use"}:
             return {}
-        if action == "edit":
-            updated = brief.model_copy(update=payload.get("brief", {}))
-            return {"brief": updated.model_dump(mode="json")}
-        raise ValueError("brief action must be continue or edit")
+        updated = intent.model_copy(update=payload.get("intent", {}))
+        return {"intent": updated.model_dump(mode="json")}
 
-    def inspect_references(state: PPTAgentState) -> dict:
-        template_path = state.get("template_path")
-        image_paths = state.get("reference_images", [])
-        if not template_path and not image_paths:
-            return {"reference_analysis": {}, "reference_decision": "none"}
-        analysis = analyze_references(template_path, image_paths)
-        style_cards = render_style_cards(
-            [analysis.style], Path(state["project_dir"]) / "reference-preview"
+    def match_recipe_node(state: PPTAgentState) -> dict:
+        intent = IntentSlots.model_validate(state["intent"])
+        recipe_id = match_recipe(state["request"], intent)
+        mixing = (
+            "No canonical recipe fully matched; mixing consulting structure with an open brief."
+            if recipe_id == RecipeId.OPEN
+            else ""
         )
-        analysis = analysis.model_copy(
-            update={"preview_paths": [*analysis.preview_paths, *style_cards]}
+        brief = build_style_brief(intent, recipe_id, mixing_note=mixing)
+        tokens = tokens_for(recipe_id)
+        Path(state["project_dir"], "style-brief.json").write_text(
+            brief.model_dump_json(indent=2), encoding="utf-8"
         )
-        (Path(state["project_dir"]) / "references.json").write_text(
-            analysis.model_dump_json(indent=2), encoding="utf-8"
-        )
-        return {"reference_analysis": analysis.model_dump(mode="json")}
+        return {
+            "recipe_id": recipe_id.value,
+            "style_brief": brief.model_dump(mode="json"),
+            "tokens": tokens.model_dump(mode="json"),
+        }
 
-    def route_reference(state: PPTAgentState) -> str:
-        return "confirm_reference" if state.get("reference_analysis") else "propose_styles"
-
-    def confirm_reference(state: PPTAgentState) -> dict:
-        analysis = ReferenceAnalysis.model_validate(state["reference_analysis"])
+    def confirm_recipe(state: PPTAgentState) -> dict:
+        brief = StyleBrief.model_validate(state["style_brief"])
+        tokens = DesignTokens.model_validate(state["tokens"])
         response = interrupt(
             {
-                "type": "reference_confirmation",
-                "message": (
-                    "A visual direction was extracted from the linked template "
-                    "or images. Choose use, adjust, or ignore."
-                ),
-                "reference": analysis.model_dump(mode="json"),
-                "actions": ["use", "adjust", "ignore"],
+                "type": "recipe_confirmation",
+                "message": "Confirm the style recipe and brief before typesetting.",
+                "recipe_id": brief.recipe_id.value,
+                "visual_proposition": brief.visual_proposition,
+                "brief": brief.model_dump(mode="json"),
+                "palette": tokens.colors.model_dump(),
+                "actions": ["use", "open"],
             }
         )
         payload = response if isinstance(response, dict) else {"action": str(response)}
-        action = str(payload.get("action", "")).strip().lower()
-        if action in {"use", "confirm", "use_reference", "a"}:
-            style = analysis.style
-            decision = "use"
-        elif action == "adjust":
-            style = StyleOption.model_validate(
-                {**analysis.style.model_dump(mode="json"), **payload.get("style", {}), "key": "A"}
-            )
-            decision = "use"
-        elif action in {"ignore", "generated", "regenerate"}:
-            _write_reference_decision(Path(state["project_dir"]), "ignore")
-            return {"reference_decision": "ignore"}
-        else:
-            raise ValueError("reference action must be use, adjust, or ignore")
-        _write_reference_decision(Path(state["project_dir"]), decision)
-        return {
-            "reference_decision": decision,
-            "selected_style": style.model_dump(mode="json"),
-        }
-
-    def route_confirmed_reference(state: PPTAgentState) -> str:
-        return "propose_typography" if state["reference_decision"] == "use" else "propose_styles"
-
-    async def propose_styles(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> dict:
-        result = await _generate(
-            runtime, styles_prompt(state["outline"]), StyleOptions, state, "propose_styles"
-        )
-        project_dir = Path(state["project_dir"])
-        previews = render_style_auditions(
-            result.options,
-            OutlinePlan.model_validate(state["outline"]),
-            project_dir / "style-previews",
-        )
-        return {
-            "styles": [item.model_dump(mode="json") for item in result.options],
-            "style_preview_paths": previews,
-        }
-
-    def confirm_style(state: PPTAgentState) -> dict:
-        choice = interrupt(
-            {
-                "type": "style_confirmation",
-                "message": (
-                    "Choose visual direction A, B, C, or D. Each preview shows a "
-                    "cover, an analytical slide, and a close using this deck's copy."
-                ),
-                "styles": state["styles"],
-                "preview_paths": state["style_preview_paths"],
+        action = str(payload.get("action", "use")).strip().lower()
+        if action in {"use", "ok", "confirm", "a", brief.recipe_id.value}:
+            return {}
+        if action in {"open", "other"}:
+            intent = IntentSlots.model_validate(state["intent"])
+            opened = build_style_brief(intent, RecipeId.OPEN, mixing_note="User requested open brief")
+            return {
+                "recipe_id": RecipeId.OPEN.value,
+                "style_brief": opened.model_dump(mode="json"),
+                "tokens": tokens_for(RecipeId.OPEN).model_dump(mode="json"),
             }
-        )
-        key = str(choice).strip().upper()
-        selected = next((item for item in state["styles"] if item["key"] == key), None)
-        if selected is None:
-            raise ValueError("style choice must be A, B, C or D")
-        return {"selected_style": selected}
+        raise ValueError("recipe action must be use or open")
 
-    def propose_typography(state: PPTAgentState) -> dict:
-        style = StyleOption.model_validate(state["selected_style"])
-        outline = OutlinePlan.model_validate(state["outline"])
-        reference = None
-        if state.get("reference_decision") == "use" and state.get("reference_analysis"):
-            reference = ReferenceAnalysis.model_validate(state["reference_analysis"])
-        profiles = build_profiles(reference)
-        previews = render_specimens(
-            profiles, style, outline, Path(state["project_dir"]) / "typography-previews"
-        )
-        return {
-            "typography_profiles": [item.model_dump(mode="json") for item in profiles],
-            "typography_preview_paths": previews,
-        }
+    def survey_env(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
+        report = survey_environment(enable_visual=runtime.context.config.enable_libreoffice_preview)
+        write_environment(report, state["project_dir"])
+        (Path(state["project_dir"]) / "render").mkdir(parents=True, exist_ok=True)
+        return {"environment": report.model_dump(mode="json")}
 
-    def confirm_typography(state: PPTAgentState) -> dict:
-        profiles = [
-            TypographyProfile.model_validate(item) for item in state["typography_profiles"]
-        ]
-        recommended = next((item.id for item in profiles if item.recommended), profiles[0].id)
-        choice = interrupt(
-            {
-                "type": "typography_confirmation",
-                "message": (
-                    "Choose a typography profile. Specimens use this deck's headline, "
-                    "body copy, and numerals."
-                ),
-                "profiles": [item.model_dump(mode="json") for item in profiles],
-                "preview_paths": state["typography_preview_paths"],
-                "recommended": recommended,
-                "actions": ["use", "custom"],
-            }
-        )
-        selected = select_profile(profiles, choice)
-        (Path(state["project_dir"]) / "typography-selection.json").write_text(
-            selected.model_dump_json(indent=2), encoding="utf-8"
-        )
-        return {"selected_typography": selected.model_dump(mode="json")}
-
-    async def build_story_design(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> dict:
+    async def plan_narrative(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
         bundle = await _generate(
             runtime,
             story_design_prompt(
                 state["outline"],
-                state["selected_style"],
+                brief=state.get("style_brief"),
                 evidence=list(state.get("evidence", [])),
-                brief=state.get("brief"),
             ),
             StoryDesignBundle,
             state,
-            "build_story_design",
+            "plan_narrative",
         )
         outline = OutlinePlan.model_validate(state["outline"])
-        pages, design = _complete_story(outline, bundle.pages, bundle.design, state)
+        pages = _complete_story(outline, bundle.pages, state)
+        tokens = DesignTokens.model_validate(state["tokens"])
+        design = tokens.to_design_spec()
         write_contracts(Path(state["project_dir"]), pages, design)
+        (Path(state["project_dir"]) / "tokens.json").write_text(
+            tokens.model_dump_json(indent=2), encoding="utf-8"
+        )
         return {
             "story": [page.model_dump(mode="json") for page in pages],
             "design": design.model_dump(mode="json"),
         }
 
-    async def plan_images(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> dict:
-        plan = await _generate(
-            runtime,
-            image_plan_prompt(state["story"], state["design"]),
-            ImagePlan,
-            state,
-            "plan_images",
-        )
-        requests = _complete_image_plan(
-            [StoryPage.model_validate(item) for item in state["story"]],
-            DesignSpec.model_validate(state["design"]),
-            plan.images,
-        )
-        return {"image_plan": [item.model_dump(mode="json") for item in requests]}
-
-    async def create_assets(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> dict:
-        paths = await generate_assets(
-            runtime.context.host,
-            [ImageRequest.model_validate(item) for item in state["image_plan"]],
-            DesignSpec.model_validate(state["design"]),
-            Path(state["project_dir"]) / "assets",
-        )
-        return {"image_paths": paths}
-
-    def render(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
+    async def build_pptx(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
+        pages = [StoryPage.model_validate(item) for item in state["story"]]
+        design = DesignSpec.model_validate(state["design"])
+        tokens = DesignTokens.model_validate(state["tokens"])
+        image_paths = dict(state.get("image_paths") or {})
+        needed = [
+            ImageRequest(
+                image_id=page.image_id,
+                page_numbers=[page.number],
+                prompt=page.visual_direction or design.illustration_style,
+            )
+            for page in pages
+            if page.image_id and page.image_id not in image_paths
+        ]
+        if needed:
+            image_paths.update(
+                await generate_assets(
+                    runtime.context.host,
+                    needed,
+                    design,
+                    Path(state["project_dir"]) / "assets",
+                )
+            )
         path = Path(state["project_dir"]) / f"{state['project_name']}.pptx"
         rendered = render_presentation(
-            [StoryPage.model_validate(item) for item in state["story"]],
-            DesignSpec.model_validate(state["design"]),
-            state.get("image_paths", {}),
+            pages,
+            design,
+            image_paths,
             path,
             runtime.context.config,
-            template_path=(
-                state.get("template_path")
-                if state.get("reference_decision") == "use"
-                else None
-            ),
+            template_path=state.get("template_path"),
+            tokens=tokens,
         )
-        return {"pptx_path": rendered}
+        return {"pptx_path": rendered, "image_paths": image_paths}
 
-    def validate(state: PPTAgentState) -> dict:
+    def guard_text(state: PPTAgentState) -> dict:
+        report = inspect_guards(state["pptx_path"])
+        write_guard_report(report, state["project_dir"])
+        return {"guards": report.model_dump(mode="json")}
+
+    def route_guards(state: PPTAgentState, runtime: Runtime[GraphContext]) -> str:
+        report = GuardReport.model_validate(state["guards"])
+        if (
+            not report.clean
+            and state.get("repair_attempts", 0) < runtime.context.config.max_repair_attempts
+        ):
+            return "repair_guards"
+        return "render_overview"
+
+    def repair_guards(state: PPTAgentState) -> dict:
+        return {"repair_attempts": state.get("repair_attempts", 0) + 1}
+
+    def render_overview(state: PPTAgentState) -> dict:
+        env = EnvironmentReport.model_validate(state.get("environment") or {})
+        pages = [StoryPage.model_validate(item) for item in state["story"]]
+        review = review_volume(
+            state["pptx_path"],
+            pages,
+            state["project_dir"],
+            visual_review=env.visual_review,
+        )
+        (Path(state["project_dir"]) / "review.json").write_text(
+            review.model_dump_json(indent=2), encoding="utf-8"
+        )
+        return {"review": review.model_dump(mode="json"), "montage_path": review.montage_path}
+
+    def inspect_reps(state: PPTAgentState) -> dict:
+        env = EnvironmentReport.model_validate(state.get("environment") or {})
+        review = VolumeReview.model_validate(state.get("review") or {})
+        if env.visual_review == "full" and review.pdf_path and review.representative_pages:
+            from ppt_expert.preview import render_representative_pages
+
+            render_representative_pages(
+                review.pdf_path,
+                Path(state["project_dir"]) / "render",
+                review.representative_pages,
+                dpi=130,
+            )
+        return {}
+
+    def route_review(state: PPTAgentState, runtime: Runtime[GraphContext]) -> str:
+        review = VolumeReview.model_validate(state.get("review") or {})
+        blocking = [item for item in review.issues if item.severity == "error"]
+        if blocking and state.get("repair_attempts", 0) < runtime.context.config.max_repair_attempts:
+            return "repair_pages"
+        return "xml_audit"
+
+    def xml_audit(state: PPTAgentState) -> dict:
         report = validate_presentation(
             state["pptx_path"],
             OutlinePlan.model_validate(state["outline"]),
@@ -312,33 +269,23 @@ def build_graph(checkpointer):
         write_validation_report(report, Path(state["project_dir"]))
         return {"validation": report.model_dump(mode="json")}
 
-    def route_after_validation(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> str:
+    def route_xml(state: PPTAgentState, runtime: Runtime[GraphContext]) -> str:
         report = ValidationReport.model_validate(state["validation"])
         if (
-            report.valid
-            or state.get("repair_attempts", 0)
-            >= runtime.context.config.max_repair_attempts
+            not report.valid
+            and state.get("repair_attempts", 0) < runtime.context.config.max_repair_attempts
         ):
-            return "critique"
-        return "repair"
+            return "repair_pages"
+        return "confirm_delivery"
 
-    async def repair(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
-        report = ValidationReport.model_validate(state["validation"])
-        quality_issues = []
-        if state.get("quality"):
-            quality = QualityReport.model_validate(state["quality"])
-            quality_issues = [
-                item.model_dump(mode="json")
-                for item in [*quality.blocking_issues, *quality.warnings]
-            ]
+    async def repair_pages(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
+        report = ValidationReport.model_validate(state.get("validation") or {"valid": True, "issues": [], "pptx_path": ""})
+        review_issues = []
+        if state.get("review"):
+            review_issues = VolumeReview.model_validate(state["review"]).issues
         failing = sorted(
-            {
-                issue.page
-                for issue in report.issues
-                if issue.page is not None
-            }
+            {issue.page for issue in report.issues if issue.page is not None}
+            | {issue.page for issue in review_issues if issue.page is not None}
         )
         bundle = await _generate(
             runtime,
@@ -346,19 +293,22 @@ def build_graph(checkpointer):
                 state["outline"],
                 state["story"],
                 state["design"],
-                [issue.model_dump(mode="json") for issue in report.issues] + quality_issues,
+                [issue.model_dump(mode="json") for issue in report.issues]
+                + [issue.model_dump(mode="json") for issue in review_issues],
                 pages=failing,
-                notes=state.get("draft_notes", ""),
+                notes=state.get("delivery_notes", ""),
             ),
             StoryDesignBundle,
             state,
-            "repair",
+            "repair_pages",
         )
         outline = OutlinePlan.model_validate(state["outline"])
-        pages, design = _complete_story(outline, bundle.pages, bundle.design, state)
+        pages = _complete_story(outline, bundle.pages, state)
         if failing:
             current = [StoryPage.model_validate(item) for item in state["story"]]
             pages = merge_repaired_pages(current, pages, failing)
+        tokens = DesignTokens.model_validate(state["tokens"])
+        design = tokens.to_design_spec()
         write_contracts(Path(state["project_dir"]), pages, design)
         return {
             "story": [page.model_dump(mode="json") for page in pages],
@@ -366,194 +316,159 @@ def build_graph(checkpointer):
             "repair_attempts": state.get("repair_attempts", 0) + 1,
         }
 
-    async def critique(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
-        started = time.perf_counter()
-        pages = [StoryPage.model_validate(item) for item in state["story"]]
-        design = DesignSpec.model_validate(state["design"])
-        project_dir = Path(state["project_dir"])
-        contact = render_contact_sheet(pages, design, project_dir / "preview")
-        report = score_deck(
-            pages,
-            design,
-            contact,
-            vision_available=runtime.context.host.critique_images is not None,
-        )
-        report = await apply_vision_review(
-            report, runtime.context.host, [contact] if contact else []
-        )
-        write_quality_report(report, project_dir)
-        record_metric(
-            project_dir,
-            "critique",
-            started,
-            score=report.score,
-            vision_review=report.vision_review,
-        )
-        return {
-            "quality": report.model_dump(mode="json"),
-            "contact_sheet_path": contact,
-        }
-
-    def route_after_critique(
-        state: PPTAgentState, runtime: Runtime[GraphContext]
-    ) -> str:
-        report = QualityReport.model_validate(state["quality"])
-        if (
-            report.blocking_issues
-            and state.get("repair_attempts", 0) < runtime.context.config.max_repair_attempts
-        ):
-            return "repair"
-        return "confirm_draft"
-
-    def confirm_draft(state: PPTAgentState) -> dict:
-        report = QualityReport.model_validate(state["quality"])
+    def confirm_delivery(state: PPTAgentState) -> dict:
+        validation = ValidationReport.model_validate(state["validation"])
+        review = VolumeReview.model_validate(state.get("review") or {})
         choice = interrupt(
             {
-                "type": "draft_confirmation",
-                "message": (
-                    "Review the contact sheet and quality score, then approve "
-                    "delivery or request a targeted revision."
-                ),
-                "quality": report.model_dump(mode="json"),
-                "contact_sheet_path": state.get("contact_sheet_path"),
-                "validation": state.get("validation"),
+                "type": "delivery_confirmation",
+                "message": "Review the montage and package audit, then approve delivery.",
+                "validation": validation.model_dump(mode="json"),
+                "review": review.model_dump(mode="json"),
+                "montage_path": state.get("montage_path"),
                 "actions": ["approve", "revise"],
             }
         )
         payload = choice if isinstance(choice, dict) else {"action": str(choice)}
         action = str(payload.get("action", "approve")).strip().lower()
-        if action in {"approve", "accept", "ok", "yes", "a"}:
-            return {"draft_decision": "approve"}
+        if action in {"approve", "accept", "ok", "yes"}:
+            return {"delivery_decision": "approve"}
         if action == "revise":
             return {
-                "draft_decision": "revise",
-                "draft_notes": str(payload.get("notes", "")).strip(),
+                "delivery_decision": "revise",
+                "delivery_notes": str(payload.get("notes", "")).strip(),
             }
-        raise ValueError("draft action must be approve or revise")
+        raise ValueError("delivery action must be approve or revise")
 
-    def route_draft(state: PPTAgentState, runtime: Runtime[GraphContext]) -> str:
+    def route_delivery(state: PPTAgentState, runtime: Runtime[GraphContext]) -> str:
         if (
-            state.get("draft_decision") == "revise"
-            and state.get("repair_attempts", 0)
-            < runtime.context.config.max_repair_attempts
+            state.get("delivery_decision") == "revise"
+            and state.get("repair_attempts", 0) < runtime.context.config.max_repair_attempts
         ):
-            return "repair"
-        return "finish"
+            return "repair_pages"
+        return "cleanup"
 
-    def finish(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
-        project_dir = Path(state["project_dir"]).resolve()
-        previews = list(state.get("style_preview_paths", []))
-        if state.get("reference_decision") == "use" and state.get("reference_analysis"):
-            previews.extend(
-                ReferenceAnalysis.model_validate(
-                    state["reference_analysis"]
-                ).preview_paths
-            )
-        previews.extend(state.get("typography_preview_paths", []))
-        contact = state.get("contact_sheet_path")
-        if contact:
-            previews.append(contact)
-        if runtime.context.config.enable_libreoffice_preview:
-            previews.extend(render_previews(state["pptx_path"], project_dir / "preview"))
+    def cleanup(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
+        project = Path(state["project_dir"]).resolve()
+        cleanup_render_intermediates(project / "render")
+        delivery = project / "DELIVERY.md"
+        brief = StyleBrief.model_validate(state["style_brief"])
+        env = EnvironmentReport.model_validate(state.get("environment") or {})
+        lines = [
+            "# DELIVERY",
+            "",
+            f"- Recipe: {brief.recipe_id.value}",
+            f"- Proposition: {brief.visual_proposition}",
+            f"- Tension: {brief.tension}",
+            f"- Visual review: {env.visual_review}",
+            f"- Montage: {state.get('montage_path') or 'degraded (no soffice/pdftoppm)'}",
+            "",
+            "## Engineering",
+            "- Editable native pptx via python-pptx tokens, primitives, and page roles.",
+            "- Short numeric tokens are single-line protected.",
+            "",
+            "## Provenance",
+            "- Figures are illustrative unless a source_note says otherwise.",
+            "",
+        ]
+        delivery.write_text("\n".join(lines), encoding="utf-8")
         artifacts = ArtifactBundle(
-            project_dir=str(project_dir),
+            project_dir=str(project),
             pptx_path=state["pptx_path"],
-            story_path=str((project_dir / "STORY.md").resolve()),
-            design_path=str((project_dir / "DESIGN.md").resolve()),
-            report_path=str((project_dir / "VALIDATION.md").resolve()),
-            preview_paths=previews,
-            quality_path=str((project_dir / "QUALITY.md").resolve()),
-            contact_sheet_path=contact or "",
+            story_path=str((project / "STORY.md").resolve()),
+            design_path=str((project / "DESIGN.md").resolve()),
+            report_path=str((project / "VALIDATION.md").resolve()),
+            preview_paths=[path for path in [state.get("montage_path")] if path],
+            contact_sheet_path=state.get("montage_path") or "",
+            montage_path=state.get("montage_path") or "",
+            delivery_path=str(delivery.resolve()),
         )
         return {"artifacts": artifacts.model_dump(mode="json")}
 
     builder = StateGraph(PPTAgentState, context_schema=GraphContext)
-    builder.add_node("parse_outline", parse_outline)
-    builder.add_node("confirm_brief", confirm_brief)
-    builder.add_node("inspect_references", inspect_references)
-    builder.add_node("confirm_reference", confirm_reference)
-    builder.add_node("propose_styles", propose_styles)
-    builder.add_node("confirm_style", confirm_style)
-    builder.add_node("propose_typography", propose_typography)
-    builder.add_node("confirm_typography", confirm_typography)
-    builder.add_node("build_story_design", build_story_design)
-    builder.add_node("plan_images", plan_images)
-    builder.add_node("generate_assets", create_assets)
-    builder.add_node("render_pptx", render)
-    builder.add_node("validate", validate)
-    builder.add_node("repair", repair)
-    builder.add_node("critique", critique)
-    builder.add_node("confirm_draft", confirm_draft)
-    builder.add_node("finish", finish)
-    builder.add_edge(START, "parse_outline")
+    builder.add_node("parse_intent", parse_intent)
+    builder.add_node("confirm_intent", confirm_intent)
+    builder.add_node("match_recipe", match_recipe_node)
+    builder.add_node("confirm_recipe", confirm_recipe)
+    builder.add_node("survey_env", survey_env)
+    builder.add_node("plan_narrative", plan_narrative)
+    builder.add_node("build_pptx", build_pptx)
+    builder.add_node("guard_text", guard_text)
+    builder.add_node("repair_guards", repair_guards)
+    builder.add_node("render_overview", render_overview)
+    builder.add_node("inspect_reps", inspect_reps)
+    builder.add_node("xml_audit", xml_audit)
+    builder.add_node("repair_pages", repair_pages)
+    builder.add_node("confirm_delivery", confirm_delivery)
+    builder.add_node("cleanup", cleanup)
+    builder.add_edge(START, "parse_intent")
     builder.add_conditional_edges(
-        "parse_outline",
-        route_brief,
-        {
-            "confirm_brief": "confirm_brief",
-            "inspect_references": "inspect_references",
-        },
+        "parse_intent",
+        route_intent,
+        {"confirm_intent": "confirm_intent", "match_recipe": "match_recipe"},
     )
-    builder.add_edge("confirm_brief", "inspect_references")
+    builder.add_edge("confirm_intent", "match_recipe")
+    builder.add_edge("match_recipe", "confirm_recipe")
+    builder.add_edge("confirm_recipe", "survey_env")
+    builder.add_edge("survey_env", "plan_narrative")
+    builder.add_edge("plan_narrative", "build_pptx")
+    builder.add_edge("build_pptx", "guard_text")
     builder.add_conditional_edges(
-        "inspect_references",
-        route_reference,
-        {
-            "confirm_reference": "confirm_reference",
-            "propose_styles": "propose_styles",
-        },
+        "guard_text",
+        route_guards,
+        {"repair_guards": "repair_guards", "render_overview": "render_overview"},
     )
+    builder.add_edge("repair_guards", "build_pptx")
+    builder.add_edge("render_overview", "inspect_reps")
     builder.add_conditional_edges(
-        "confirm_reference",
-        route_confirmed_reference,
-        {
-            "propose_typography": "propose_typography",
-            "propose_styles": "propose_styles",
-        },
-    )
-    builder.add_edge("propose_styles", "confirm_style")
-    builder.add_edge("confirm_style", "propose_typography")
-    builder.add_edge("propose_typography", "confirm_typography")
-    builder.add_edge("confirm_typography", "build_story_design")
-    builder.add_edge("build_story_design", "plan_images")
-    builder.add_edge("plan_images", "generate_assets")
-    builder.add_edge("generate_assets", "render_pptx")
-    builder.add_edge("render_pptx", "validate")
-    builder.add_conditional_edges(
-        "validate", route_after_validation, {"repair": "repair", "critique": "critique"}
+        "inspect_reps",
+        route_review,
+        {"repair_pages": "repair_pages", "xml_audit": "xml_audit"},
     )
     builder.add_conditional_edges(
-        "critique",
-        route_after_critique,
-        {"repair": "repair", "confirm_draft": "confirm_draft"},
+        "xml_audit",
+        route_xml,
+        {"repair_pages": "repair_pages", "confirm_delivery": "confirm_delivery"},
     )
     builder.add_conditional_edges(
-        "confirm_draft", route_draft, {"repair": "repair", "finish": "finish"}
+        "confirm_delivery",
+        route_delivery,
+        {"repair_pages": "repair_pages", "cleanup": "cleanup"},
     )
-    builder.add_edge("repair", "render_pptx")
-    builder.add_edge("finish", END)
+    builder.add_edge("repair_pages", "build_pptx")
+    builder.add_edge("cleanup", END)
     return builder.compile(checkpointer=checkpointer)
 
 
+def _complete_story(outline: OutlinePlan, proposed: list[StoryPage], state: PPTAgentState) -> list[StoryPage]:
+    from ppt_expert.models import EvidenceBundle, EvidenceItem
+
+    pages = enrich_story(_normalize_story(outline, proposed))
+    bundle = EvidenceBundle(
+        items=[EvidenceItem.model_validate(item) for item in state.get("evidence", [])]
+    )
+    pages = attach_evidence(pages, bundle)
+    return [_assign_role(index, page, len(pages)) for index, page in enumerate(pages)]
+
+
 def _normalize_story(outline: OutlinePlan, proposed: list[StoryPage]) -> list[StoryPage]:
+    from ppt_expert.models import LayoutType
+
     normalized: list[StoryPage] = []
     for index, source in enumerate(outline.pages):
         page = proposed[index] if index < len(proposed) else None
         proposed_content = page.content if page and page.content else []
-        content = proposed_content + [
-            item for item in source.core_content if item not in proposed_content
-        ]
-        layout = page.layout if page else (LayoutType.HERO if index == 0 else LayoutType.TEXT)
+        content = proposed_content + [item for item in source.core_content if item not in proposed_content]
         normalized.append(
             StoryPage(
                 number=source.number,
                 title=source.title,
                 content=content,
                 visual_direction=page.visual_direction if page else source.title,
-                layout=layout,
+                layout=page.layout if page else LayoutType.TEXT,
                 image_id=page.image_id if page else None,
                 section=source.section,
-                family=_infer_family(index, page, layout),
+                family=page.family if page else None,
                 eyebrow=page.eyebrow if page else "",
                 subtitle=page.subtitle if page else "",
                 takeaway=page.takeaway if page else "",
@@ -569,169 +484,34 @@ def _normalize_story(outline: OutlinePlan, proposed: list[StoryPage]) -> list[St
                 quote=page.quote if page else "",
                 chart_secondary=page.chart_secondary if page else None,
                 evidence_ids=page.evidence_ids if page else [],
-                visual_form=page.visual_form if page else None,
-                confidence=page.confidence if page else "estimated",
-                purpose=page.purpose if page else "",
-                composition=page.composition if page else "",
+                role=page.role if page else None,
+                speaker_notes=page.speaker_notes if page else (page.takeaway if page else source.title),
             )
         )
     return normalized
 
 
-def _complete_story(
-    outline: OutlinePlan,
-    proposed: list[StoryPage],
-    design: DesignSpec,
-    state: PPTAgentState,
-) -> tuple[list[StoryPage], DesignSpec]:
-    pages = enrich_story(_normalize_story(outline, proposed))
-    locked = _finalize_design(design, state)
-    bundle = EvidenceBundle(
-        items=[EvidenceItem.model_validate(item) for item in state.get("evidence", [])]
-    )
-    pages = attach_evidence(pages, bundle)
-    pages = choose_compositions(pages, locked, Path(state["project_dir"]))
-    return pages, locked
-
-
-def _infer_family(index: int, page: StoryPage | None, layout: LayoutType) -> SlideFamily:
-    if page and page.family is not None:
-        return page.family
-    if page and page.chart_secondary is not None:
-        return SlideFamily.DUAL_CHART
-    if page and page.chart is not None:
-        return SlideFamily.CHART_INTERPRETATION
-    if page and page.waterfall:
-        return SlideFamily.WATERFALL
-    if page and page.heatmap is not None:
-        return SlideFamily.HEATMAP
-    if page and page.milestones:
-        return SlideFamily.TIMELINE
-    if page and page.quote:
-        return SlideFamily.QUOTE
-    if page and page.table is not None:
-        return SlideFamily.TABLE_COMPARISON
-    if page and page.scenarios:
-        return SlideFamily.SCENARIO_MATRIX
-    if page and page.allocation:
-        return SlideFamily.ALLOCATION
-    if page and page.kpis:
-        return SlideFamily.COVER if index == 0 else SlideFamily.KPI_STRIP
-    if index == 0 and layout == LayoutType.HERO:
-        return SlideFamily.HERO if page and page.image_id else SlideFamily.COVER
-    return SlideFamily(layout.value)
-
-
-def _finalize_design(design: DesignSpec, state: PPTAgentState) -> DesignSpec:
-    design = _lock_design(design, StyleOption.model_validate(state["selected_style"]))
-    design = _apply_typography(design, state)
-    return _complete_palette(design)
-
-
-def _lock_design(design: DesignSpec, style: StyleOption) -> DesignSpec:
-    return design.model_copy(
-        update={
-            "style_name": style.name,
-            "mood": style.mood,
-            "primary": style.primary,
-            "secondary": style.secondary,
-            "background": style.background,
-            "text": style.text,
-            "accent": style.accent,
-        }
-    )
-
-
-def _apply_typography(design: DesignSpec, state: PPTAgentState) -> DesignSpec:
-    selected = state.get("selected_typography")
-    if not selected:
-        return _apply_reference_fonts(design, state)
-    profile = TypographyProfile.model_validate(selected)
-    return design.model_copy(
-        update={
-            "title_font": profile.east_asian_font,
-            "body_font": profile.east_asian_font,
-            "latin_font": profile.latin_font,
-            "east_asian_font": profile.east_asian_font,
-            "numeric_font": profile.numeric_font,
-            "typography_profile": profile.id,
-            "title_font_fallbacks": profile.fallbacks or design.title_font_fallbacks,
-            "body_font_fallbacks": profile.fallbacks or design.body_font_fallbacks,
-        }
-    )
-
-
-def _apply_reference_fonts(design: DesignSpec, state: PPTAgentState) -> DesignSpec:
-    if state.get("reference_decision") != "use" or not state.get("reference_analysis"):
-        return design
-    analysis = ReferenceAnalysis.model_validate(state["reference_analysis"])
-    updates: dict[str, str] = {}
-    if analysis.title_font:
-        updates["title_font"] = analysis.title_font
-        updates["latin_font"] = analysis.title_font
-    if analysis.body_font:
-        updates["body_font"] = analysis.body_font
-        updates["east_asian_font"] = analysis.body_font
-    return design.model_copy(update=updates)
-
-
-def _complete_palette(design: DesignSpec) -> DesignSpec:
-    return design.model_copy(
-        update={
-            "muted": design.muted or _mix_hex(design.text, design.background, 0.42),
-            "surface": design.surface or _mix_hex(design.background, design.primary, 0.1),
-            "positive": design.positive or design.secondary,
-            "negative": design.negative or design.primary,
-            "warning": design.warning or design.accent,
-        }
-    )
-
-
-def _mix_hex(start: str, end: str, amount: float) -> str:
-    def channel(color: str, index: int) -> int:
-        return int(color[1 + index * 2 : 3 + index * 2], 16)
-
-    mixed = [
-        round(channel(start, index) + (channel(end, index) - channel(start, index)) * amount)
-        for index in range(3)
-    ]
-    return "#{:02X}{:02X}{:02X}".format(*mixed)
-
-
-def _write_reference_decision(project_dir: Path, decision: str) -> None:
-    (project_dir / "reference-selection.json").write_text(
-        json.dumps({"decision": decision}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def _complete_image_plan(
-    pages: list[StoryPage], design: DesignSpec, proposed: list[ImageRequest]
-) -> list[ImageRequest]:
-    by_id = {item.image_id: item for item in proposed}
-    expected: dict[str, list[int]] = {}
-    for page in pages:
-        if page.image_id and page.needs_artwork():
-            expected.setdefault(page.image_id, []).append(page.number)
-    result: list[ImageRequest] = []
-    for image_id, page_numbers in expected.items():
-        if image_id in by_id:
-            item = by_id[image_id].model_copy(update={"page_numbers": page_numbers})
+def _assign_role(index: int, page: StoryPage, total: int) -> StoryPage:
+    role = page.role
+    if role is None:
+        if index == 0:
+            role = PageRole.COVER
+        elif index == total - 1:
+            role = PageRole.CLOSE
+        elif page.scenarios:
+            role = PageRole.SCENARIO
+        elif page.allocation:
+            role = PageRole.STRUCTURE
+        elif page.table or page.waterfall or page.heatmap:
+            role = PageRole.EVIDENCE
+        elif page.chart:
+            role = PageRole.CONTEXT
+        elif index == 1:
+            role = PageRole.OVERVIEW
         else:
-            directions = "；".join(
-                page.visual_direction for page in pages if page.image_id == image_id
-            )
-            item = ImageRequest(
-                image_id=image_id,
-                page_numbers=page_numbers,
-                prompt=(
-                    f"{design.illustration_style}. Use {design.primary}, "
-                    f"{design.secondary}, and {design.background}. {directions}. "
-                    "No text, watermarks, signatures, or identifiable facial details."
-                ),
-            )
-        result.append(item)
-    return result
+            role = PageRole.EXPANSION
+    notes = page.speaker_notes or page.takeaway or page.title
+    return page.model_copy(update={"role": role, "speaker_notes": notes})
 
 
 async def _generate(runtime: Runtime[GraphContext], prompt: str, schema, state: PPTAgentState, node: str):

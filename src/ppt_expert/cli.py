@@ -24,15 +24,11 @@ app = typer.Typer(help="Host-model-powered LangGraph PPT Expert Agent")
 @app.command()
 def demo(
     output: Annotated[Path, typer.Option(help="Output directory")] = Path("outputs"),
-    style: Annotated[
-        str | None, typer.Option(help="Choose A/B/C/D without prompting")
+    recipe: Annotated[
+        str | None, typer.Option(help="Recipe action: use or open")
     ] = None,
-    typography: Annotated[
-        str | None,
-        typer.Option(help="Typography profile id, or recommended"),
-    ] = None,
-    draft: Annotated[
-        str | None, typer.Option(help="Draft decision: approve or revise")
+    delivery: Annotated[
+        str | None, typer.Option(help="Delivery decision: approve or revise")
     ] = None,
     template: Annotated[
         Path | None, typer.Option(help="Optional PPTX template")
@@ -41,9 +37,6 @@ def demo(
         list[Path] | None,
         typer.Option("--reference-image", help="Repeatable style reference image"),
     ] = None,
-    reference_action: Annotated[
-        str, typer.Option(help="Reference decision: use or ignore")
-    ] = "use",
 ) -> None:
     """Run a complete offline demo with the deterministic fake host."""
 
@@ -58,43 +51,25 @@ def demo(
             )
             while result["status"] == "interrupted":
                 request = result["request"]
-                if request["type"] == "brief_confirmation":
-                    typer.echo("Brief needs confirmation:")
-                    typer.echo(json.dumps(request["brief"], ensure_ascii=False, indent=2))
+                if request["type"] == "intent_confirmation":
+                    typer.echo("Intent needs confirmation:")
+                    typer.echo(json.dumps(request["intent"], ensure_ascii=False, indent=2))
                     result = await agent.resume(result["thread_id"], {"action": "continue"})
-                elif request["type"] == "reference_confirmation":
-                    typer.echo("References and extracted visual direction:")
-                    for path in request["reference"]["preview_paths"]:
-                        typer.echo(f"  {path}")
-                    result = await agent.resume(
-                        result["thread_id"], {"action": reference_action}
-                    )
-                elif request["type"] == "style_confirmation":
-                    typer.echo("Visual direction previews:")
-                    for path in request["preview_paths"]:
-                        typer.echo(f"  {path}")
-                    choice = (
-                        style or typer.prompt("Choose direction A/B/C/D", default="A")
-                    ).upper()
-                    result = await agent.resume(result["thread_id"], choice)
-                elif request["type"] == "typography_confirmation":
-                    typer.echo("Typography specimens:")
-                    for path in request["preview_paths"]:
-                        typer.echo(f"  {path}")
-                    profile = typography or typer.prompt(
-                        "Typography profile", default=request.get("recommended", "recommended")
-                    )
-                    result = await agent.resume(
-                        result["thread_id"], {"action": "use", "profile": profile}
-                    )
-                elif request["type"] == "draft_confirmation":
+                elif request["type"] == "recipe_confirmation":
+                    typer.echo(f"Recipe: {request['recipe_id']}")
+                    typer.echo(request["visual_proposition"])
+                    action = recipe or typer.prompt("Use this recipe or open", default="use")
+                    result = await agent.resume(result["thread_id"], {"action": action})
+                elif request["type"] == "delivery_confirmation":
                     typer.echo(
-                        f"Quality score: {request['quality']['score']}"
+                        "Package valid"
+                        if request["validation"]["valid"]
+                        else "Package has issues"
                     )
-                    if request.get("contact_sheet_path"):
-                        typer.echo(f"  {request['contact_sheet_path']}")
-                    action = draft or typer.prompt(
-                        "Approve draft or revise", default="approve"
+                    if request.get("montage_path"):
+                        typer.echo(f"  {request['montage_path']}")
+                    action = delivery or typer.prompt(
+                        "Approve delivery or revise", default="approve"
                     )
                     result = await agent.resume(
                         result["thread_id"], {"action": action}

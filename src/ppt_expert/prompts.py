@@ -3,69 +3,70 @@ from __future__ import annotations
 import json
 from typing import Any
 
-SYSTEM_RULES = """You are an expert presentation designer. Follow these rules:
+from ppt_expert.recipes import FOUNDATIONS
+
+SYSTEM_RULES = """You are a presentation visual director, not a slide filler.
 1. Preserve the user's outline. Do not add, remove, or alter slide counts, titles,
-   or core facts; only refine the writing.
-2. Choose a slide family from the slide's job, not by cycling a fixed layout list.
-   One assertion per slide.
-3. Visual-first means native charts, tables, KPI tiles, scenario matrices, and
-   allocation graphics. Assign image_id only for image-led narrative slides
-   (hero, left_image, right_image, top_image). Analytical slides must not depend
-   on generated artwork.
-4. Use only the approved palette and the approved typography stack.
-5. Every image prompt must define a consistent art style, palette, and scene.
-   Show people from the back or in profile, and explicitly prohibit text,
-   watermarks, signatures, and identifiable facial details.
-6. Keep body copy concise. Put numbers into kpis, chart, table, or allocation
-   fields instead of burying them in bullets.
+   or core facts; only refine the writing into assertions.
+2. Choose a narrative page role: cover, overview, context, evidence, structure,
+   expansion, scenario, close. Adjacent pages must not share a silhouette.
+3. Evidence is native charts, tables, KPI tiles, scenario matrices, and allocation
+   graphics. Assign image_id only when the approved recipe's image behavior allows.
+4. Use only role-named design tokens. Never invent palette hex values.
+5. Every slide needs a takeaway (implication) and speaker notes describing intent.
+6. Put numbers into kpis, chart, table, or allocation fields.
 """
 
 
-def outline_prompt(request: str) -> str:
+def intent_prompt(request: str) -> str:
+    foundations = "\n".join(f"- {item}" for item in FOUNDATIONS)
     return f"""{SYSTEM_RULES}
-Parse the user input into a slide-by-slide outline. If the user provides only a
-topic with no slide count, create a complete ten-slide structure. Preserve any
-explicit numbering or structure exactly.
+Production foundations:
+{foundations}
+
+Fill the four production slots from the user request:
+- topic: what the deck is about
+- audience: who sees it and in what setting
+- objective: the judgment or action it must produce
+- slide_count, density (low/medium/high), editable, delivery_format
 
 User input:
 {request}
 """
 
 
-def styles_prompt(outline: dict[str, Any]) -> str:
+def outline_prompt(request: str, intent: dict[str, Any] | None = None) -> str:
     return f"""{SYSTEM_RULES}
-Create four distinct, professional visual directions labeled A, B, C, and D.
-Each direction must include a name, mood, and five #RRGGBB colors with sufficient
-contrast for readable body copy.
+Parse the user input into a slide-by-slide outline of assertion titles.
+If the user provides only a topic, create a complete structure of
+{ (intent or {}).get("slide_count", 8) } slides. Preserve explicit numbering.
 
-Outline:
-{json.dumps(outline, ensure_ascii=False)}
+Intent:
+{json.dumps(intent or {}, ensure_ascii=False)}
+
+User input:
+{request}
 """
 
 
 def story_design_prompt(
     outline: dict[str, Any],
-    style: dict[str, Any],
-    evidence: list[dict[str, Any]] | None = None,
     brief: dict[str, Any] | None = None,
+    evidence: list[dict[str, Any]] | None = None,
 ) -> str:
     return f"""{SYSTEM_RULES}
-Produce a slide-by-slide STORY and DESIGN from the outline and approved direction.
-- Page count, numbering, titles, and core facts must map one-to-one to the outline.
-- layout must be one of: hero, left_image, right_image, top_image, text, data_cards.
-- family should be one of: cover, section, executive_summary, kpi_strip,
-  chart_interpretation, dual_chart, table_comparison, scenario_matrix, allocation,
-  waterfall, heatmap, timeline, pillars, quote, conclusion, appendix, hero,
-  left_image, right_image, top_image, text, data_cards.
-- Cover slides need eyebrow, subtitle, and 2–4 kpis. Analytical slides need chart,
-  table, scenarios, allocation, waterfall, or heatmap when the evidence is quantitative.
-- Bind evidence_ids to the EvidenceItem ids supplied below. Do not invent metrics.
-- chart uses chart_type line|column|bar|area, categories, and series[].values as numbers.
-- Assign a stable image_id only when the family is image-led. Leave image_id null
-  for covers and analytical slides that can be drawn with vectors.
-- Every DESIGN color must come from the approved direction.
+Produce STORY pages from the outline and approved style brief.
+- Page count, numbering, titles, and core facts map one-to-one to the outline.
+- role must be one of: cover, overview, context, evidence, structure, expansion,
+  scenario, close. First page is cover, last page is close.
+- Cover needs eyebrow, subtitle, 2–4 kpis. Analytical pages need chart, table,
+  scenarios, or allocation when the evidence is quantitative.
+- Bind evidence_ids. chart uses chart_type line|column|bar|area and numeric series.
+- layout may be text. family may match the role. image_id stays null on consulting
+  evidence pages.
+- DESIGN colors must come from the approved brief; do not invent hex values.
 
-Brief:
+Style brief:
 {json.dumps(brief or {}, ensure_ascii=False)}
 
 Evidence:
@@ -73,26 +74,6 @@ Evidence:
 
 Outline:
 {json.dumps(outline, ensure_ascii=False)}
-
-Approved direction:
-{json.dumps(style, ensure_ascii=False)}
-"""
-
-
-def image_plan_prompt(story: list[dict[str, Any]], design: dict[str, Any]) -> str:
-    return f"""{SYSTEM_RULES}
-Create an artwork plan only for image-led slides that already have an image_id.
-Do not invent artwork for covers, KPI strips, charts, tables, scenarios, or
-allocation slides. Include each image_id exactly once and list every reuse
-location in page_numbers. Write prompts in the deck's language, incorporate the
-DESIGN art direction and palette, and end each prompt by prohibiting text,
-watermarks, signatures, and identifiable facial details.
-
-STORY:
-{json.dumps(story, ensure_ascii=False)}
-
-DESIGN:
-{json.dumps(design, ensure_ascii=False)}
 """
 
 
@@ -108,8 +89,7 @@ def repair_prompt(
     user_notes = f"\nReviewer notes: {notes}" if notes else ""
     return f"""{SYSTEM_RULES}
 Validation or critique found the issues below. {scope} Do not change outline
-length, titles, or facts, and do not introduce colors outside the approved
-palette. Preserve native charts, tables, KPIs, and typography.
+length, titles, or facts. Preserve native charts, tables, KPIs, and tokens.
 Return the complete repaired result.{user_notes}
 
 Outline: {json.dumps(outline, ensure_ascii=False)}

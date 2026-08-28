@@ -1,0 +1,368 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from lxml import etree
+from pptx.chart.data import CategoryChartData
+from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+from pptx.oxml.ns import qn
+from pptx.util import Inches, Pt
+
+from ppt_expert.models import ChartSpec, ChartType, DesignTokens, KPIItem, StoryPage
+
+CHART_TYPES = {
+    ChartType.LINE: XL_CHART_TYPE.LINE,
+    ChartType.COLUMN: XL_CHART_TYPE.COLUMN_CLUSTERED,
+    ChartType.BAR: XL_CHART_TYPE.BAR_CLUSTERED,
+    ChartType.AREA: XL_CHART_TYPE.AREA,
+}
+
+
+def rgb(value: str) -> RGBColor:
+    return RGBColor.from_string(value.lstrip("#"))
+
+
+@dataclass
+class Canvas:
+    slide: object
+    tokens: DesignTokens
+    dark: bool = False
+    boxes: list[dict] = field(default_factory=list)
+
+    @property
+    def c(self):
+        return self.tokens.colors
+
+    @property
+    def f(self):
+        return self.tokens.fonts
+
+    @property
+    def p(self):
+        return self.tokens.page
+
+    @property
+    def ink(self) -> str:
+        return self.c.dark_ink if self.dark else self.c.ink
+
+    @property
+    def ink2(self) -> str:
+        return self.c.dark_muted if self.dark else self.c.ink2
+
+    @property
+    def muted(self) -> str:
+        return self.c.dark_muted if self.dark else self.c.muted
+
+    @property
+    def bg(self) -> str:
+        return self.c.dark_bg if self.dark else self.c.bg
+
+    @property
+    def surface(self) -> str:
+        return self.c.dark_hairline if self.dark else self.c.surface
+
+    @property
+    def accent(self) -> str:
+        return self.c.dark_accent if self.dark else self.c.accent
+
+    @property
+    def hairline_color(self) -> str:
+        return self.c.dark_hairline if self.dark else self.c.hairline
+
+
+def paint_background(slide, color: str, width, height) -> None:
+    shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, width, height)
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = rgb(color)
+    shape.line.fill.background()
+
+
+def _clamp(canvas: Canvas, left: float, top: float, width: float, height: float) -> tuple[float, float, float, float]:
+    left = max(0.0, left)
+    top = max(0.0, top)
+    width = min(width, canvas.p.w - left)
+    height = min(height, canvas.p.h - top)
+    return left, top, max(width, 0.01), max(height, 0.01)
+
+
+def rect(canvas: Canvas, left, top, width, height, color: str, rounded=False):
+    left, top, width, height = _clamp(canvas, left, top, width, height)
+    kind = MSO_SHAPE.ROUNDED_RECTANGLE if rounded else MSO_SHAPE.RECTANGLE
+    shape = canvas.slide.shapes.add_shape(
+        kind, Inches(left), Inches(top), Inches(width), Inches(height)
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = rgb(color)
+    shape.line.fill.background()
+    return shape
+
+
+def hairline(canvas: Canvas, left, top, width) -> None:
+    shape = rect(canvas, left, top, width, 0.012, canvas.hairline_color)
+    shape.line.fill.background()
+
+
+def vline(canvas: Canvas, left, top, height) -> None:
+    rect(canvas, left, top, 0.012, height, canvas.hairline_color)
+
+
+def _apply_fonts(run, latin: str, east_asian: str) -> None:
+    run.font.name = latin
+    r_pr = run._r.get_or_add_rPr()
+    for tag, typeface in (("a:latin", latin), ("a:ea", east_asian), ("a:cs", latin)):
+        element = r_pr.find(qn(tag))
+        if element is None:
+            element = etree.SubElement(r_pr, qn(tag))
+        element.set("typeface", typeface)
+
+
+def textbox(
+    canvas: Canvas,
+    text: str,
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    size: int,
+    color: str | None = None,
+    *,
+    bold: bool = False,
+    align=PP_ALIGN.LEFT,
+    numeric: bool = False,
+    wrap: bool = True,
+    anchor=MSO_ANCHOR.TOP,
+):
+    left, top, width, height = _clamp(canvas, left, top, width, height)
+    box = canvas.slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+    frame = box.text_frame
+    frame.clear()
+    frame.word_wrap = wrap
+    frame.auto_size = MSO_AUTO_SIZE.NONE
+    frame.margin_left = frame.margin_right = Inches(0.04)
+    frame.margin_top = frame.margin_bottom = Inches(0.02)
+    frame.vertical_anchor = anchor
+    paragraph = frame.paragraphs[0]
+    paragraph.text = text
+    paragraph.alignment = align
+    paragraph.line_spacing = 1.15
+    latin = canvas.f.num if numeric else canvas.f.display if bold else canvas.f.cn
+    east = canvas.f.cn
+    paragraph.font.size = Pt(size)
+    paragraph.font.bold = bold
+    paragraph.font.color.rgb = rgb(color or canvas.ink)
+    for run in paragraph.runs:
+        _apply_fonts(run, latin, east)
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        run.font.color.rgb = rgb(color or canvas.ink)
+    canvas.boxes.append({"text": text, "left": left, "top": top, "width": width, "height": height, "size": size, "wrap": wrap})
+    return box
+
+
+def token(
+    canvas: Canvas,
+    value: str,
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    size: int = 12,
+    color: str | None = None,
+    bold: bool = True,
+):
+    """Single-line protection for short numeric tokens."""
+    needed = max(0.42, len(value) * size * 0.012)
+    box_w = min(max(width, needed), max(0.2, canvas.p.w - left))
+    return textbox(
+        canvas,
+        value,
+        left,
+        top,
+        box_w,
+        height,
+        size,
+        color,
+        bold=bold,
+        numeric=True,
+        wrap=False,
+        anchor=MSO_ANCHOR.MIDDLE,
+    )
+
+
+def mini_label(canvas: Canvas, text: str, left, top, width, color: str | None = None) -> None:
+    textbox(canvas, text, left, top, width, 0.22, 11, color or canvas.accent, bold=True)
+
+
+def header(canvas: Canvas, page: StoryPage, volume_title: str = "") -> float:
+    page_metrics = canvas.p
+    inner = page_metrics.w - 2 * page_metrics.mx
+    nav = page.eyebrow or page.section or page.resolved_role().value.replace("_", " ").upper()
+    if page.number:
+        nav = f"{page.number:02d}  ·  {nav}"
+    mini_label(canvas, nav, page_metrics.mx, page_metrics.header_nav_y, inner * 0.72)
+    if volume_title:
+        textbox(
+            canvas,
+            volume_title,
+            page_metrics.mx + inner * 0.72,
+            page_metrics.header_nav_y,
+            inner * 0.28,
+            0.22,
+            10,
+            canvas.muted,
+            align=PP_ALIGN.RIGHT,
+        )
+    textbox(
+        canvas,
+        page.title,
+        page_metrics.mx,
+        page_metrics.header_title_y,
+        inner,
+        page_metrics.header_title_h,
+        22 if len(page.title) > 22 else 26,
+        canvas.ink,
+        bold=True,
+    )
+    hairline(canvas, page_metrics.mx, page_metrics.header_rule_y, inner)
+    return page_metrics.content_top
+
+
+def footer(canvas: Canvas, page: StoryPage) -> None:
+    page_metrics = canvas.p
+    inner = page_metrics.w - 2 * page_metrics.mx
+    note = page.source_note or page.section or ""
+    if note:
+        textbox(canvas, note, page_metrics.mx, page_metrics.footer_y, inner - 0.9, 0.22, 10, canvas.muted)
+    token(
+        canvas,
+        f"{page.number:02d}",
+        page_metrics.w - page_metrics.mx - 0.55,
+        page_metrics.footer_y,
+        0.55,
+        0.22,
+        10,
+        canvas.muted,
+        bold=False,
+    )
+
+
+def panel(canvas: Canvas, left, top, width, height, *, accent_bar: str | None = "left") -> None:
+    rect(canvas, left, top, width, height, canvas.surface, rounded=True)
+    if accent_bar == "left":
+        rect(canvas, left, top, 0.07, height, canvas.accent)
+    elif accent_bar == "top":
+        rect(canvas, left, top, width, 0.05, canvas.accent)
+
+
+def implication(canvas: Canvas, text: str) -> None:
+    if not text:
+        return
+    page_metrics = canvas.p
+    inner = page_metrics.w - 2 * page_metrics.mx
+    panel(canvas, page_metrics.mx, page_metrics.implication_y, inner, 0.58, accent_bar="left")
+    mini_label(
+        canvas,
+        "IMPLICATION",
+        page_metrics.mx + 0.18,
+        page_metrics.implication_y + 0.06,
+        2.2,
+    )
+    textbox(
+        canvas,
+        text,
+        page_metrics.mx + 0.18,
+        page_metrics.implication_y + 0.24,
+        inner - 0.36,
+        0.3,
+        13,
+        canvas.ink,
+        bold=True,
+    )
+
+
+def stat_card(canvas: Canvas, item: KPIItem, left, top, width, height) -> None:
+    panel(canvas, left, top, width, height, accent_bar="left")
+    token(canvas, item.value, left + 0.18, top + 0.16, width - 0.3, 0.5, 24, canvas.accent)
+    textbox(canvas, item.label, left + 0.18, top + 0.7, width - 0.3, 0.28, 13, canvas.ink, bold=True)
+    if item.note:
+        textbox(canvas, item.note, left + 0.18, top + 1.02, width - 0.3, 0.28, 11, canvas.muted)
+
+
+def progress(canvas: Canvas, left, top, width, height, percent: float, color: str | None = None) -> None:
+    rect(canvas, left, top, width, height, canvas.surface, rounded=True)
+    fill = max(0.04, width * min(max(percent, 0), 100) / 100)
+    rect(canvas, left, top, fill, height, color or canvas.accent, rounded=True)
+
+
+def motif(canvas: Canvas) -> None:
+    """Low-frequency identity layer for dark cover/close pages."""
+    page_metrics = canvas.p
+    rect(canvas, 0, 0, 0.16, page_metrics.h, canvas.accent)
+    rect(
+        canvas,
+        page_metrics.w - 2.05,
+        0.28,
+        1.42,
+        1.42,
+        canvas.c.dark_hairline,
+        rounded=True,
+    )
+    rect(
+        canvas,
+        page_metrics.w - 1.7,
+        page_metrics.h - 1.55,
+        1.08,
+        1.08,
+        canvas.c.dark_hairline,
+        rounded=True,
+    )
+
+
+def chart_base(canvas: Canvas, spec: ChartSpec, left, top, width, height) -> None:
+    data = CategoryChartData()
+    data.categories = spec.categories
+    for series in spec.series:
+        data.add_series(series.name, series.values)
+    frame = canvas.slide.shapes.add_chart(
+        CHART_TYPES[spec.chart_type],
+        Inches(left),
+        Inches(top),
+        Inches(width),
+        Inches(height),
+        data,
+    )
+    chart = frame.chart
+    chart.has_legend = len(spec.series) > 1
+    if chart.has_legend:
+        chart.legend.include_in_layout = False
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    if spec.title:
+        chart.has_title = True
+        chart.chart_title.text_frame.text = spec.title
+    palette = [canvas.c.accent, canvas.c.positive, canvas.c.caution, canvas.c.ink2]
+    for index, series in enumerate(chart.series):
+        color = palette[index % len(palette)]
+        if spec.chart_type in {ChartType.COLUMN, ChartType.BAR, ChartType.AREA}:
+            series.format.fill.solid()
+            series.format.fill.fore_color.rgb = rgb(color)
+            series.format.line.fill.background()
+        else:
+            try:
+                series.format.line.color.rgb = rgb(color)
+            except ValueError:
+                series.format.fill.solid()
+                series.format.fill.fore_color.rgb = rgb(color)
+    try:
+        chart.value_axis.has_major_gridlines = False
+        chart.value_axis.has_minor_gridlines = False
+    except ValueError:
+        pass
+
+
+def speaker_notes(slide, page: StoryPage) -> None:
+    notes = page.speaker_notes or page.takeaway or page.title
+    frame = slide.notes_slide.notes_text_frame
+    frame.text = notes

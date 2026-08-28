@@ -1,9 +1,12 @@
+import re
+import zipfile
 from io import BytesIO
 from pathlib import Path
 
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.util import Inches
 
 from ppt_expert.assets import generate_assets
 from ppt_expert.config import AgentConfig
@@ -17,25 +20,30 @@ from ppt_expert.models import (
     LayoutType,
     OutlinePage,
     OutlinePlan,
+    PageRole,
+    RecipeId,
     SlideFamily,
     StoryPage,
     TableSpec,
 )
 from ppt_expert.pptx import render_presentation
+from ppt_expert.recipes import tokens_for
 from ppt_expert.runtime import HostRuntime
 from ppt_expert.validation import validate_presentation
 
 
 def _design() -> DesignSpec:
     return DesignSpec(
-        style_name="Test Direction",
+        style_name="consulting",
         mood="Clear and composed",
-        primary="#16324F",
-        secondary="#2E6F95",
-        background="#F4F8FB",
-        text="#102A43",
-        accent="#F29E4C",
-        illustration_style="Contemporary flat illustration",
+        primary="#1F4E79",
+        secondary="#44505C",
+        background="#F7F8FA",
+        text="#1B242C",
+        accent="#1F4E79",
+        illustration_style="vector_first",
+        typography_profile="consulting",
+        token_palette=list(tokens_for(RecipeId.CONSULTING).palette_hex()),
     )
 
 
@@ -125,6 +133,158 @@ def test_native_chart_table_and_kpis_validate(tmp_path: Path) -> None:
     assert report.valid is True, report.model_dump()
     assert any(shape.has_chart for shape in presentation.slides[1].shapes)
     assert any(shape.has_table for shape in presentation.slides[2].shapes)
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        assert len([n for n in names if n.startswith("ppt/slides/slide") and n.endswith(".xml")]) == 3
+        assert len([n for n in names if n.startswith("ppt/notesSlides/") and n.endswith(".xml")]) >= 3
+        xml = " ".join(archive.read(n).decode("utf-8", errors="ignore") for n in names if n.endswith(".xml"))
+        assert not re.search(r"undefined|NaN|\[object", xml)
+
+
+def test_pillar_cards_use_hierarchy_instead_of_tall_empty_columns(tmp_path: Path) -> None:
+    pages = [
+        StoryPage(
+            number=1,
+            title="三条主线：出海制造、科技自主、红利重估",
+            content=[
+                "出海制造：海外收入 34%, 盈利 +14%; 风险：关税与汇率",
+                "科技自主：设备订单 +42%, 盈利 +21%; 风险：估值抬升过快",
+                "红利重估：股息率 4.8%, 增配空间 +1.6pct; 风险：利率反弹",
+                "机制：三主线相关系数 <0.4, 等权配置即构成再平衡",
+            ],
+            visual_direction="Four theme modules",
+            layout=LayoutType.DATA_CARDS,
+            family=SlideFamily.PILLARS,
+            role=PageRole.EXPANSION,
+            eyebrow="行业配置",
+            speaker_notes="Four expansion columns.",
+        )
+    ]
+    outline = OutlinePlan(
+        title="Pillars",
+        pages=[OutlinePage(number=1, title=pages[0].title, core_content=pages[0].content)],
+    )
+    path = tmp_path / "pillars.pptx"
+    design = _design()
+    render_presentation(pages, design, {}, path, AgentConfig())
+    report = validate_presentation(path, outline, pages, design, {})
+    presentation = Presentation(path)
+    cards = [
+        shape
+        for shape in presentation.slides[0].shapes
+        if shape.has_text_frame and "海外收入" in shape.text
+    ]
+
+    assert report.valid is True, report.model_dump()
+    assert any("01" in shape.text for shape in presentation.slides[0].shapes if shape.has_text_frame)
+    assert cards
+    assert cards[0].height < Inches(3.2)
+
+
+def test_chart_interpretation_sizes_copy_to_content(tmp_path: Path) -> None:
+    pages = [
+        StoryPage(
+            number=1,
+            title="增长换挡而非失速，政策托底意愿强于弹性",
+            content=[
+                "内需：社零 +4.6%，弱修复延续",
+                "外需：出口 +3.8%，韧性尚存",
+                "政策：赤字率 4.0%，托底意愿强于弹性",
+            ],
+            visual_direction="PMI chart",
+            layout=LayoutType.TEXT,
+            family=SlideFamily.CHART_INTERPRETATION,
+            role=PageRole.CONTEXT,
+            eyebrow="宏观动能",
+            takeaway="研判：分子端修复依靠盈利回升，而非宏观杠杆重新扩张",
+            chart=ChartSpec(
+                chart_type=ChartType.LINE,
+                title="制造业 / 非制造业 PMI",
+                categories=["24Q1", "24Q2", "25Q4"],
+                series=[ChartSeries(name="制造业 PMI", values=[50.0, 49.2, 50.1])],
+            ),
+        )
+    ]
+    outline = OutlinePlan(
+        title="Macro",
+        pages=[OutlinePage(number=1, title=pages[0].title, core_content=pages[0].content)],
+    )
+    path = tmp_path / "chart.pptx"
+    design = _design()
+    render_presentation(pages, design, {}, path, AgentConfig())
+    report = validate_presentation(path, outline, pages, design, {})
+    takeaway = next(
+        shape
+        for shape in Presentation(path).slides[0].shapes
+        if shape.has_text_frame and "分子端修复" in shape.text
+    )
+
+    assert report.valid is True, report.model_dump()
+    assert takeaway.height < Inches(2.2)
+
+
+def test_header_rule_and_footer_are_locked(tmp_path: Path) -> None:
+    pages = [
+        StoryPage(
+            number=1,
+            title="Cover assertion for the briefing",
+            content=["Own the inflection"],
+            visual_direction="Cover",
+            layout=LayoutType.HERO,
+            family=SlideFamily.COVER,
+            role=PageRole.COVER,
+            kpis=[KPIItem(value="3", label="Scenarios")],
+            speaker_notes="Cover",
+        ),
+        StoryPage(
+            number=2,
+            title="Three conditions still have to hold",
+            content=["Breadth expands", "Rates stay orderly", "Credit turns"],
+            visual_direction="Overview",
+            layout=LayoutType.DATA_CARDS,
+            family=SlideFamily.EXECUTIVE_SUMMARY,
+            role=PageRole.OVERVIEW,
+            speaker_notes="Overview",
+        ),
+        StoryPage(
+            number=3,
+            title="Process is the hedge against narrative",
+            content=["Rebalance monthly", "Cut on revision failure", "Add only on breadth"],
+            visual_direction="Expansion",
+            layout=LayoutType.DATA_CARDS,
+            family=SlideFamily.PILLARS,
+            role=PageRole.EXPANSION,
+            speaker_notes="Expansion",
+        ),
+        StoryPage(
+            number=4,
+            title="Close with a decision, not a slogan",
+            content=["Act this quarter"],
+            visual_direction="Close",
+            layout=LayoutType.TEXT,
+            family=SlideFamily.CONCLUSION,
+            role=PageRole.CLOSE,
+            speaker_notes="Close",
+        ),
+    ]
+    path = tmp_path / "chrome.pptx"
+    render_presentation(pages, _design(), {}, path, AgentConfig())
+    presentation = Presentation(path)
+    footer_tops = []
+    header_tops = []
+    for slide_index, slide in enumerate(presentation.slides):
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = shape.text.strip()
+            if text in {"01", "02", "03", "04"} and round(shape.top.inches, 1) >= 7.0:
+                footer_tops.append(round(shape.top.inches, 2))
+            if slide_index in {1, 2} and pages[slide_index].title in text:
+                header_tops.append(round(shape.top.inches, 2))
+    assert footer_tops
+    assert len(set(footer_tops)) == 1
+    assert header_tops
+    assert len(set(header_tops)) == 1
 
 
 
@@ -174,3 +334,39 @@ async def test_jpg_sibling_written_by_host_is_discovered_and_converted(tmp_path:
     with Image.open(generated) as image:
         assert image.format == "PNG"
         assert image.getpixel((40, 30))[1] > 140
+
+
+def test_compose_modules_use_role_tokens_not_stray_hex() -> None:
+    allowed = {"#FFFFFF", "#000000"}
+    root = Path(__file__).resolve().parents[1] / "src" / "ppt_expert" / "pptx"
+    for name in ("slides.py", "primitives.py", "renderer.py"):
+        found = set(re.findall(r"#[0-9A-Fa-f]{6}", (root / name).read_text(encoding="utf-8")))
+        assert found <= allowed, f"{name} has stray hex: {found - allowed}"
+
+
+def test_package_xml_has_notes_and_no_placeholders(tmp_path: Path) -> None:
+    pages = [
+        StoryPage(
+            number=1,
+            title="Cover assertion for the briefing",
+            content=["Own the inflection"],
+            visual_direction="Cover",
+            layout=LayoutType.HERO,
+            family=SlideFamily.COVER,
+            role=PageRole.COVER,
+            speaker_notes="Cover intent",
+            kpis=[KPIItem(value="3", label="Scenarios")],
+        )
+    ]
+    path = tmp_path / "xml.pptx"
+    render_presentation(pages, _design(), {}, path, AgentConfig())
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        notes = [name for name in names if name.startswith("ppt/notesSlides/") and name.endswith(".xml")]
+        blob = " ".join(
+            archive.read(name).decode("utf-8", errors="ignore")
+            for name in names
+            if name.endswith(".xml")
+        )
+    assert notes
+    assert not re.search(r"undefined|NaN|\[object", blob)

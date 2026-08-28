@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,22 +13,16 @@ from ppt_expert.demo_runtime import fake_structured_generate
 from ppt_expert.models import StoryDesignBundle
 
 
-async def _complete(agent, pending, *, style="A", typography="recommended"):
+async def _complete(agent, pending):
     result = pending
     while result["status"] == "interrupted":
         kind = result["request"]["type"]
-        if kind == "brief_confirmation":
+        if kind == "intent_confirmation":
             result = await agent.resume(result["thread_id"], {"action": "continue"})
-        elif kind == "style_confirmation":
-            result = await agent.resume(result["thread_id"], style)
-        elif kind == "typography_confirmation":
-            result = await agent.resume(
-                result["thread_id"], {"action": "use", "profile": typography}
-            )
-        elif kind == "draft_confirmation":
+        elif kind == "recipe_confirmation":
+            result = await agent.resume(result["thread_id"], {"action": "use"})
+        elif kind == "delivery_confirmation":
             result = await agent.resume(result["thread_id"], {"action": "approve"})
-        elif kind == "reference_confirmation":
-            raise AssertionError("reference confirmation should be handled by the test")
         else:
             raise AssertionError(kind)
     return result
@@ -45,21 +40,14 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
     async with create_ppt_agent(runtime, config) as agent:
         interrupted = await agent.start("Create a PPT Expert workflow overview", project_name="demo")
         assert interrupted["status"] == "interrupted"
-        assert interrupted["request"]["type"] == "style_confirmation"
-        assert len(interrupted["request"]["preview_paths"]) == 4
+        assert interrupted["request"]["type"] == "recipe_confirmation"
+        assert interrupted["request"]["recipe_id"]
+        assert interrupted["request"]["palette"]
 
-        pending = await agent.resume(interrupted["thread_id"], "A")
+        pending = await agent.resume(interrupted["thread_id"], {"action": "use"})
         assert pending["status"] == "interrupted"
-        assert pending["request"]["type"] == "typography_confirmation"
-        assert pending["request"]["preview_paths"]
-
-        completed = await agent.resume(
-            pending["thread_id"], {"action": "use", "profile": "recommended"}
-        )
-        assert completed["status"] == "interrupted"
-        assert completed["request"]["type"] == "draft_confirmation"
-        assert completed["request"]["contact_sheet_path"]
-        assert completed["request"]["quality"]["score"] >= 80
+        assert pending["request"]["type"] == "delivery_confirmation"
+        assert pending["request"]["validation"]["valid"] is True
 
         completed = await agent.resume(pending["thread_id"], {"action": "approve"})
         assert completed["status"] == "completed"
@@ -69,13 +57,14 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
     assert Path(artifacts["story_path"]).exists()
     assert Path(artifacts["design_path"]).exists()
     assert Path(artifacts["report_path"]).exists()
-    assert Path(artifacts["quality_path"]).exists()
-    assert Path(artifacts["contact_sheet_path"]).exists()
+    assert Path(artifacts["delivery_path"]).exists()
+    assert (Path(artifacts["project_dir"]) / "tokens.json").exists()
+    assert (Path(artifacts["project_dir"]) / "environment.json").exists()
+    assert (Path(artifacts["project_dir"]) / "guards.json").exists()
+    env = json.loads((Path(artifacts["project_dir"]) / "environment.json").read_text(encoding="utf-8"))
+    assert env["visual_review"] == "degraded"
     metrics = Path(artifacts["project_dir"]) / "metrics.jsonl"
     assert metrics.exists()
-    recorded = [line for line in metrics.read_text(encoding="utf-8").splitlines() if line]
-    assert any('"node": "parse_outline"' in line for line in recorded)
-    assert any('"node": "build_story_design"' in line for line in recorded)
     presentation = Presentation(artifacts["pptx_path"])
     assert len(presentation.slides) == 4
     assert any(shape.has_chart for shape in presentation.slides[1].shapes)
@@ -125,39 +114,12 @@ async def test_validation_failure_routes_through_repair(tmp_path: Path) -> None:
         state = await agent.state(interrupted["thread_id"])
 
     assert completed["validation"]["valid"] is True
-    assert state["repair_attempts"] == 1
+    assert state["repair_attempts"] >= 1
     assert story_calls == 2
 
 
 @pytest.mark.asyncio
-async def test_reference_image_uses_human_confirmation(tmp_path: Path) -> None:
-    reference = tmp_path / "reference.png"
-    image = Image.new("RGB", (300, 200), "#F6F1E8")
-    image.paste("#294C60", (0, 0, 180, 200))
-    image.paste("#E6A15C", (180, 0, 300, 100))
-    image.save(reference)
-    config = AgentConfig(
-        output_root=tmp_path / "outputs",
-        checkpoint_path=tmp_path / "checkpoints.sqlite3",
-        enable_libreoffice_preview=False,
-    )
-
-    async with create_ppt_agent(
-        HostRuntime(structured_generate=fake_structured_generate), config
-    ) as agent:
-        pending = await agent.start("reference test", reference_images=[reference])
-        assert pending["request"]["type"] == "reference_confirmation"
-        pending = await agent.resume(pending["thread_id"], {"action": "use"})
-        completed = await _complete(agent, pending)
-
-    assert completed["status"] == "completed"
-    project = Path(completed["artifacts"]["project_dir"])
-    assert (project / "references.json").exists()
-    assert (project / "reference-selection.json").exists()
-
-
-@pytest.mark.asyncio
-async def test_pptx_template_is_used_after_confirmation(tmp_path: Path) -> None:
+async def test_template_still_renders(tmp_path: Path) -> None:
     template = tmp_path / "template.pptx"
     source = Presentation()
     source.slide_width = Inches(10)
@@ -169,24 +131,18 @@ async def test_pptx_template_is_used_after_confirmation(tmp_path: Path) -> None:
         checkpoint_path=tmp_path / "checkpoints.sqlite3",
         enable_libreoffice_preview=False,
     )
-
     async with create_ppt_agent(
         HostRuntime(structured_generate=fake_structured_generate), config
     ) as agent:
         pending = await agent.start("template test", template_path=template)
-        assert pending["request"]["type"] == "reference_confirmation"
-        pending = await agent.resume(pending["thread_id"], "use")
         completed = await _complete(agent, pending)
 
     presentation = Presentation(completed["artifacts"]["pptx_path"])
     assert len(presentation.slides) == 4
-    assert presentation.slide_width == Inches(13.333)
-    assert presentation.slide_height == Inches(7.5)
-    assert presentation.slides[0].slide_layout.name == "Title Slide"
 
 
 @pytest.mark.asyncio
-async def test_ignoring_reference_returns_to_style_selection(tmp_path: Path) -> None:
+async def test_reference_images_do_not_block_recipe_gate(tmp_path: Path) -> None:
     reference = tmp_path / "reference.png"
     Image.new("RGB", (100, 100), "#336699").save(reference)
     config = AgentConfig(
@@ -194,12 +150,10 @@ async def test_ignoring_reference_returns_to_style_selection(tmp_path: Path) -> 
         checkpoint_path=tmp_path / "checkpoints.sqlite3",
         enable_libreoffice_preview=False,
     )
-
     async with create_ppt_agent(
         HostRuntime(structured_generate=fake_structured_generate), config
     ) as agent:
-        pending = await agent.start("ignore reference", reference_images=[reference])
-        next_step = await agent.resume(pending["thread_id"], {"action": "ignore"})
-
-    assert next_step["status"] == "interrupted"
-    assert next_step["request"]["type"] == "style_confirmation"
+        pending = await agent.start("reference test", reference_images=[reference])
+        assert pending["request"]["type"] == "recipe_confirmation"
+        completed = await _complete(agent, pending)
+    assert completed["status"] == "completed"

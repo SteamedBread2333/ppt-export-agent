@@ -17,6 +17,7 @@ def write_contracts(project_dir: Path, pages: list[StoryPage], design: DesignSpe
             [
                 f"## {page.number}. {page.title}",
                 f"- Section: {page.section or 'Unassigned'}",
+                f"- Role: {(page.role or page.resolved_role()).value}",
                 f"- Layout: {page.layout.value}",
                 f"- Family: {(page.family or page.resolved_family()).value}",
                 f"- Artwork: {page.image_id or 'None'} — {page.visual_direction}",

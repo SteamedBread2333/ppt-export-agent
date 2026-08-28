@@ -70,6 +70,190 @@ class ChartType(StrEnum):
     AREA = "area"
 
 
+class RecipeId(StrEnum):
+    CONSULTING = "consulting"
+    WORK_REPORT = "work_report"
+    CIVIC = "civic"
+    ART_MARKET = "art_market"
+    EDITORIAL = "editorial"
+    HISTORY = "history"
+    OPEN = "open"
+
+
+class PageRole(StrEnum):
+    COVER = "cover"
+    OVERVIEW = "overview"
+    CONTEXT = "context"
+    EVIDENCE = "evidence"
+    STRUCTURE = "structure"
+    EXPANSION = "expansion"
+    SCENARIO = "scenario"
+    CLOSE = "close"
+
+
+class IntentSlots(BaseModel):
+    topic: str
+    audience: str = ""
+    objective: str = ""
+    slide_count: int = Field(default=8, ge=1, le=40)
+    editable: bool = True
+    delivery_format: str = "pptx"
+    density: Literal["low", "medium", "high"] = "medium"
+
+    def needs_confirmation(self) -> bool:
+        return not self.topic.strip() or not self.audience.strip() or not self.objective.strip()
+
+
+class ColorRoles(BaseModel):
+    bg: str
+    surface: str
+    ink: str
+    ink2: str
+    muted: str
+    accent: str
+    positive: str
+    caution: str
+    risk: str
+    hairline: str
+    dark_bg: str
+    dark_ink: str
+    dark_muted: str
+    dark_accent: str
+    dark_hairline: str
+
+    @field_validator(
+        "bg",
+        "surface",
+        "ink",
+        "ink2",
+        "muted",
+        "accent",
+        "positive",
+        "caution",
+        "risk",
+        "hairline",
+        "dark_bg",
+        "dark_ink",
+        "dark_muted",
+        "dark_accent",
+        "dark_hairline",
+    )
+    @classmethod
+    def valid_hex(cls, value: str) -> str:
+        value = value.upper()
+        if len(value) != 7 or not value.startswith("#"):
+            raise ValueError("color must be #RRGGBB")
+        int(value[1:], 16)
+        return value
+
+
+class FontRoles(BaseModel):
+    cn: str = "PingFang SC"
+    num: str = "Arial"
+    display: str = "PingFang SC"
+
+
+class PageMetrics(BaseModel):
+    w: float = 13.333
+    h: float = 7.5
+    mx: float = 0.62
+    header_nav_y: float = 0.32
+    header_title_y: float = 0.54
+    header_title_h: float = 0.42
+    header_rule_y: float = 0.98
+    content_top: float = 1.16
+    content_bottom: float = 6.72
+    implication_y: float = 6.36
+    footer_y: float = 7.12
+
+
+class DesignTokens(BaseModel):
+    recipe_id: RecipeId
+    colors: ColorRoles
+    fonts: FontRoles
+    page: PageMetrics = Field(default_factory=PageMetrics)
+    visual_proposition: str
+    tension: str
+    image_behavior: str = "vector_first"
+
+    def palette_hex(self) -> set[str]:
+        values = list(self.colors.model_dump().values()) + ["#FFFFFF", "#000000"]
+        return {item.upper() for item in values}
+
+    def to_design_spec(self) -> DesignSpec:
+        colors = self.colors
+        return DesignSpec(
+            style_name=self.recipe_id.value,
+            mood=self.visual_proposition,
+            primary=colors.accent,
+            secondary=colors.ink2,
+            background=colors.bg,
+            text=colors.ink,
+            accent=colors.accent,
+            title_font=self.fonts.display,
+            body_font=self.fonts.cn,
+            latin_font=self.fonts.num,
+            east_asian_font=self.fonts.cn,
+            numeric_font=self.fonts.num,
+            muted=colors.muted,
+            surface=colors.surface,
+            positive=colors.positive,
+            negative=colors.risk,
+            warning=colors.caution,
+            illustration_style=self.image_behavior,
+            typography_profile=self.recipe_id.value,
+            token_palette=list(self.palette_hex()),
+        )
+
+
+class StyleBrief(BaseModel):
+    adjectives: list[str] = Field(min_length=3, max_length=3)
+    tension: str
+    density: Literal["low", "medium", "high"] = "medium"
+    color_logic: str
+    type_logic: str
+    image_behavior: str
+    spatial_rhythm: str
+    recipe_id: RecipeId
+    visual_proposition: str
+    mixing_note: str = ""
+
+
+class GuardWarning(BaseModel):
+    page: int
+    token: str
+    box_width: float
+    recommended: float
+    message: str
+
+
+class GuardReport(BaseModel):
+    warnings: list[GuardWarning] = Field(default_factory=list)
+
+    @property
+    def clean(self) -> bool:
+        return not self.warnings
+
+
+class EnvironmentReport(BaseModel):
+    soffice: bool = False
+    pdftoppm: bool = False
+    magick: bool = False
+    pil: bool = True
+    visual_review: Literal["full", "degraded"] = "degraded"
+
+
+class VolumeReview(BaseModel):
+    rhythm_ok: bool = True
+    no_adjacent_repeat: bool = True
+    no_empty_bottom: bool = True
+    chrome_locked: bool = True
+    representative_pages: list[int] = Field(default_factory=list)
+    issues: list[QualityIssue] = Field(default_factory=list)
+    montage_path: str = ""
+    pdf_path: str = ""
+
+
 class OutlinePage(BaseModel):
     number: int = Field(ge=1)
     title: str = Field(min_length=1)
@@ -282,6 +466,7 @@ class DesignSpec(BaseModel):
     grid_columns: int = 12
     grid_gutter: float = 0.16
     safe_margin: float = 0.62
+    token_palette: list[str] = Field(default_factory=list)
 
     @field_validator("muted", "surface", "positive", "negative", "warning")
     @classmethod
@@ -308,7 +493,9 @@ class DesignSpec(BaseModel):
             self.negative,
             self.warning,
         ]
-        return {item.upper() for item in values if item}
+        return {item.upper() for item in values if item} | {
+            item.upper() for item in self.token_palette if item
+        }
 
     def allowed_font_names(self) -> set[str]:
         names = [
@@ -351,11 +538,52 @@ class StoryPage(BaseModel):
     confidence: Literal["confirmed", "estimated", "illustrative"] = "estimated"
     purpose: str = ""
     composition: str = ""
+    role: PageRole | None = None
+    speaker_notes: str = ""
 
     def resolved_family(self) -> SlideFamily:
         if self.family is not None:
             return self.family
         return SlideFamily(self.layout.value)
+
+    def resolved_role(self) -> PageRole:
+        if self.role is not None:
+            return self.role
+        family = self.resolved_family()
+        mapping = {
+            SlideFamily.COVER: PageRole.COVER,
+            SlideFamily.HERO: PageRole.COVER,
+            SlideFamily.EXECUTIVE_SUMMARY: PageRole.OVERVIEW,
+            SlideFamily.KPI_STRIP: PageRole.OVERVIEW,
+            SlideFamily.CHART_INTERPRETATION: PageRole.CONTEXT,
+            SlideFamily.DUAL_CHART: PageRole.STRUCTURE,
+            SlideFamily.TABLE_COMPARISON: PageRole.EVIDENCE,
+            SlideFamily.WATERFALL: PageRole.EVIDENCE,
+            SlideFamily.HEATMAP: PageRole.EVIDENCE,
+            SlideFamily.ALLOCATION: PageRole.STRUCTURE,
+            SlideFamily.TIMELINE: PageRole.STRUCTURE,
+            SlideFamily.PILLARS: PageRole.EXPANSION,
+            SlideFamily.DATA_CARDS: PageRole.EXPANSION,
+            SlideFamily.SCENARIO_MATRIX: PageRole.SCENARIO,
+            SlideFamily.CONCLUSION: PageRole.CLOSE,
+            SlideFamily.QUOTE: PageRole.CLOSE,
+            SlideFamily.SECTION: PageRole.OVERVIEW,
+            SlideFamily.APPENDIX: PageRole.EVIDENCE,
+        }
+        if family in mapping:
+            return mapping[family]
+        if self.scenarios:
+            return PageRole.SCENARIO
+        if self.chart:
+            return PageRole.CONTEXT
+        if self.table:
+            return PageRole.EVIDENCE
+        if self.allocation:
+            return PageRole.STRUCTURE
+        return PageRole.EXPANSION
+
+    def is_dark(self) -> bool:
+        return self.resolved_role() in {PageRole.COVER, PageRole.CLOSE}
 
     def needs_artwork(self) -> bool:
         if not self.image_id:
@@ -437,6 +665,8 @@ class ArtifactBundle(BaseModel):
     preview_paths: list[str] = Field(default_factory=list)
     quality_path: str = ""
     contact_sheet_path: str = ""
+    montage_path: str = ""
+    delivery_path: str = ""
 
 
 class PPTAgentState(TypedDict, total=False):
@@ -445,31 +675,30 @@ class PPTAgentState(TypedDict, total=False):
     project_dir: str
     template_path: str | None
     reference_images: list[str]
-    reference_analysis: dict[str, Any]
-    reference_decision: str
+    intent: dict[str, Any]
+    recipe_id: str
+    style_brief: dict[str, Any]
+    environment: dict[str, Any]
     outline: dict[str, Any]
-    brief: dict[str, Any]
     evidence: list[dict[str, Any]]
-    styles: list[dict[str, Any]]
-    style_preview_paths: list[str]
-    selected_style: dict[str, Any]
-    typography_profiles: list[dict[str, Any]]
-    typography_preview_paths: list[str]
-    selected_typography: dict[str, Any]
     story: list[dict[str, Any]]
     design: dict[str, Any]
+    tokens: dict[str, Any]
     image_plan: list[dict[str, Any]]
     image_paths: dict[str, str]
     pptx_path: str
+    guards: dict[str, Any]
+    review: dict[str, Any]
     validation: dict[str, Any]
-    quality: dict[str, Any]
-    contact_sheet_path: str
-    draft_decision: str
-    draft_notes: str
+    montage_path: str
+    delivery_decision: str
+    delivery_notes: str
     repair_attempts: int
-    composition_path: str
     artifacts: dict[str, Any]
 
 
 def absolute(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
+
+
+VolumeReview.model_rebuild()

@@ -24,56 +24,56 @@ revision, and delivery.
 
 - **Host-native intelligence** — reuses the model and image tools already owned by
   the calling application.
-- **Human-directed art direction** — pauses for style, typography, and reference
-  approval with LangGraph human-in-the-loop interrupts.
-- **Template-aware generation** — extracts colors, fonts, masters, and layout
-  relationships from an existing `.pptx`.
-- **Reference-driven styling** — derives a semantic palette from one or more images.
-- **Deterministic rendering** — produces editable PowerPoint files with
-  `python-pptx`.
-- **Production safeguards** — validates fidelity, assets, fonts, palette usage,
-  element bounds, and text-density risk.
+- **Six-phase production** — intent, recipe, design system, guards, rendered
+  review, XML delivery; not a one-shot text-to-slides pass.
+- **Recipe-led art direction** — six style recipes (consulting, work report, civic,
+  art market, editorial, history) plus an open brief, confirmed before typesetting.
+- **Token and primitive rendering** — role-named colors, locked header/footer,
+  native charts and modules via python-pptx.
 - **Durable execution** — resumes interrupted or failed work from SQLite checkpoints.
+
+The production contract is [`PPT_AGENT_SPEC.md`](PPT_AGENT_SPEC.md).
 
 ## Architecture
 
 ```text
-Brief / Outline / References
-              │
-              ▼
-     Parse · Brief · Evidence
-              │
-              ▼
-   Inspect Template / Images ───────┐
-              │                     │
-              ▼                     │
-      Human Style Approval          │
-              │                     │
-              ▼                     │
-     Typography Approval            │
-              │                     │
-              ▼                     │
-   STORY + DESIGN + Composition     │
-              │                     │
-              ▼                     │
-   Vector-first Visual Plan         │
-              │                     │
-              ▼                     │
-      Host Image Generation         │
-              │                     │
-              ▼                     │
-        PPTX Composition            │
-              │                     │
-              ▼                     │
- Validate ── Critique ── Repair ◄───┘
-              │
-              ▼
-     Draft Approval + Reports
+User request
+      │
+      ▼
+Parse intent (topic / audience / objective / form)
+      │
+      ▼
+Match recipe + write style brief  ── HITL confirm
+      │
+      ▼
+Survey environment (soffice / pdftoppm / PIL)
+      │
+      ▼
+Plan narrative page roles
+      │
+      ▼
+Encode tokens → compose primitives → build pptx
+      │
+      ▼
+Text guards (zero-render) ── widen / rebuild
+      │
+      ▼
+Montage review + representative pages
+      │
+      ▼
+XML package audit
+      │
+      ▼
+Delivery confirmation + cleanup
 ```
 
 `HostRuntime` is injected through LangGraph's `context_schema`. It is never
 serialized into a checkpoint; SQLite stores only portable workflow state.
-Optional `critique_images` lets the host visually review the contact sheet.
+
+Interrupts: `intent_confirmation` (only if topic/audience/objective are empty),
+`recipe_confirmation` (`use` or `open`), then `delivery_confirmation`
+(`approve` or `revise`). Recipes: `consulting`, `work_report`, `civic`,
+`art_market`, `editorial`, `history`, plus `open` when nothing fits.
 
 ## Installation
 
@@ -104,14 +104,11 @@ async with create_ppt_agent(runtime, config) as agent:
         project_name="annual-business-review",
     )
 
-    # Display the style previews, then resume with the chosen direction.
-    pending = await agent.resume(pending["thread_id"], "B")
-    # Approve a typography specimen. Modern Consulting is the default recommendation.
-    result = await agent.resume(
-        pending["thread_id"],
-        {"action": "use", "profile": "recommended"},
-    )
-    result = await agent.resume(result["thread_id"], {"action": "approve"})
+    # Confirm the matched recipe and style brief (`use` or `open`).
+    # If topic/audience/objective were empty, resume intent_confirmation first.
+    pending = await agent.resume(pending["thread_id"], {"action": "use"})
+    # Approve delivery after montage + XML audit (`approve` or `revise`).
+    result = await agent.resume(pending["thread_id"], {"action": "approve"})
     print(result["artifacts"]["pptx_path"])
 ```
 
@@ -160,28 +157,17 @@ pending = await agent.start(
 )
 ```
 
-The graph pauses with a `reference_confirmation` interrupt. After `use` or
-`adjust`, it still pauses for typography approval. `ignore` returns to the
-standard four-style selection. The host can submit one of three decisions:
+The graph pauses for `recipe_confirmation`, not four-style cards or typography.
+A template is applied as the native-edit branch during `build_pptx`. Reference
+images do not replace the recipe gate. Consulting recipes stay vector-first and
+do not use ImageGen in place of charts.
 
 ```python
-# Use the extracted direction as-is.
-result = await agent.resume(pending["thread_id"], {"action": "use"})
-
-# Refine selected tokens before continuing.
-result = await agent.resume(
-    pending["thread_id"],
-    {
-        "action": "adjust",
-        "style": {"primary": "#123456", "accent": "#F2A900"},
-    },
-)
-
-# Ignore references and continue to the standard four-style selection.
-next_step = await agent.resume(pending["thread_id"], {"action": "ignore"})
+pending = await agent.resume(pending["thread_id"], {"action": "use"})
+result = await agent.resume(pending["thread_id"], {"action": "approve"})
 ```
 
-When a template is approved, sample slides are removed while theme, master, and
+When a template is supplied, sample slides are removed while theme, master, and
 layout relationships are retained. The output is normalized to a 16:9 canvas.
 
 ## Asset Normalization
@@ -197,16 +183,17 @@ and normalizes every generated asset to a real PNG before composition.
 Run the fully offline demo:
 
 ```bash
-ppt-expert demo --style A
+ppt-expert demo --recipe use --delivery approve
 ```
 
-Run the demo with visual references:
+Run the demo with a template (native-edit branch):
 
 ```bash
 ppt-expert demo \
+  --recipe use \
+  --delivery approve \
   --template references/brand-template.pptx \
-  --reference-image references/key-visual.png \
-  --reference-action use
+  --reference-image references/key-visual.png
 ```
 
 Validate or rebuild an existing project:
@@ -226,24 +213,29 @@ ppt-expert watch outputs/<project-directory>
 
 ```text
 outputs/<project-thread>/
+├── intent.json
+├── foundations.json
 ├── outline.json
+├── style-brief.json
+├── tokens.json
+├── environment.json
+├── guards.json
+├── review.json
 ├── STORY.md
 ├── DESIGN.md
 ├── story.json
 ├── design.json
-├── references.json
-├── reference-selection.json
-├── style-previews/
-├── reference-preview/
 ├── assets/
+├── render/                 # montage.png, optional PDF; hi-res pg-*.png removed on cleanup
 ├── <project>.pptx
 ├── VALIDATION.md
-└── validation.json
+├── validation.json
+└── DELIVERY.md
 ```
 
-LibreOffice enables PDF previews. When `pdftoppm` is also available, the agent emits
-one PNG preview per slide. Preview tooling is optional and never blocks PPTX
-delivery.
+LibreOffice + `pdftoppm` enable a 70dpi montage and 130dpi representative pages.
+If they are missing, the run still completes and `environment.json` records
+`visual_review: degraded`.
 
 ## Host Capability Contract
 
@@ -263,6 +255,9 @@ pytest
 ruff check .
 ```
 
-The suite covers checkpointed interrupts, reference approval, template reuse,
-layout rendering, image fallback and format normalization, validation, and the
-repair route.
+The suite covers recipe matching, token/primitive rendering, short-number
+guards, environment degradation, XML package audit, template reuse, checkpointed
+`recipe_confirmation` / `delivery_confirmation` interrupts, and page-level repair.
+
+See [`PPT_AGENT_SPEC.md`](PPT_AGENT_SPEC.md) for recipes, page roles, HITL
+payloads, and delivery gates.

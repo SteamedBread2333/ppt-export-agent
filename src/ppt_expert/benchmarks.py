@@ -10,12 +10,14 @@ from ppt_expert.models import (
     KPIItem,
     LayoutType,
     Milestone,
+    RecipeId,
     ScenarioColumn,
     SlideFamily,
     StoryPage,
     TableSpec,
     WaterfallItem,
 )
+from ppt_expert.recipes import tokens_for
 
 STRATEGY_DESIGN = DesignSpec(
     style_name="Market Briefing",
@@ -26,11 +28,13 @@ STRATEGY_DESIGN = DesignSpec(
     text="#102A43",
     accent="#F29E4C",
     illustration_style="Vector-first consulting",
+    typography_profile="consulting",
     latin_font="Avenir Next",
     east_asian_font="PingFang SC",
     numeric_font="Avenir Next",
     muted="#5B7083",
     surface="#E7EEF4",
+    token_palette=list(tokens_for(RecipeId.CONSULTING).palette_hex()),
 )
 
 

@@ -7,21 +7,28 @@ from ppt_expert.models import (
     ChartSpec,
     ChartType,
     DesignSpec,
-    ImagePlan,
+    IntentSlots,
     KPIItem,
     LayoutType,
     OutlinePage,
     OutlinePlan,
+    PageRole,
     SlideFamily,
     StoryDesignBundle,
     StoryPage,
-    StyleOption,
-    StyleOptions,
 )
 
 
 def fake_structured_generate(prompt: str, schema: type) -> Any:
     """Deterministic offline host used only by tests and `ppt-expert demo`."""
+    if schema is IntentSlots:
+        return IntentSlots(
+            topic="PPT Expert workflow",
+            audience="Demo users",
+            objective="Demonstrate the six-phase production system",
+            slide_count=4,
+            density="medium",
+        )
     if schema is OutlinePlan:
         return OutlinePlan(
             title="PPT Expert Demo",
@@ -54,51 +61,6 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                 ),
             ],
         )
-    if schema is StyleOptions:
-        return StyleOptions(
-            options=[
-                StyleOption(
-                    key="A",
-                    name="Warm Narrative",
-                    mood="Warm, human, and approachable",
-                    primary="#E8603C",
-                    secondary="#F5C24B",
-                    background="#FFF8F0",
-                    text="#3D2B1F",
-                    accent="#3B8C88",
-                ),
-                StyleOption(
-                    key="B",
-                    name="Deep Blue",
-                    mood="Measured, confident, and trustworthy",
-                    primary="#16324F",
-                    secondary="#2E6F95",
-                    background="#F4F8FB",
-                    text="#102A43",
-                    accent="#F29E4C",
-                ),
-                StyleOption(
-                    key="C",
-                    name="Fresh Botanical",
-                    mood="Light, energetic, and minimal",
-                    primary="#3A7D44",
-                    secondary="#A4C3A2",
-                    background="#F5FAF4",
-                    text="#24352A",
-                    accent="#E9A03B",
-                ),
-                StyleOption(
-                    key="D",
-                    name="Modern Violet",
-                    mood="Creative, refined, and forward-looking",
-                    primary="#5B4B8A",
-                    secondary="#9B8FC4",
-                    background="#F8F6FC",
-                    text="#29243A",
-                    accent="#E06C9F",
-                ),
-            ]
-        )
     if schema is StoryDesignBundle:
         return StoryDesignBundle(
             pages=[
@@ -106,13 +68,15 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                     number=1,
                     title="From Idea to Presentation",
                     content=["Make every message more compelling"],
-                    visual_direction="Consulting cover with KPIs, not a full-bleed illustration",
+                    visual_direction="Consulting cover with KPIs",
                     layout=LayoutType.HERO,
                     family=SlideFamily.COVER,
+                    role=PageRole.COVER,
                     eyebrow="PPT EXPERT",
                     subtitle="A host-model workflow that designs before it decorates",
                     takeaway="Design the argument before decorating the slide.",
                     source_note="Demo fixture",
+                    speaker_notes="Open on the production claim, not a photograph.",
                     kpis=[
                         KPIItem(value="4", label="Slides", note="Outline fidelity"),
                         KPIItem(value="1", label="Assertion", note="Per slide"),
@@ -127,15 +91,16 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                         "Create a focal point on every slide",
                         "Control information density",
                     ],
-                    visual_direction="Line chart of narrative density across the deck",
+                    visual_direction="Line chart of narrative density",
                     layout=LayoutType.TEXT,
                     family=SlideFamily.CHART_INTERPRETATION,
+                    role=PageRole.CONTEXT,
                     eyebrow="STRUCTURE",
                     takeaway="Density should peak once, then resolve.",
                     source_note="Demo fixture",
+                    speaker_notes="Walk the density curve; do not read every bullet.",
                     chart=ChartSpec(
                         chart_type=ChartType.LINE,
-                        title="",
                         categories=["Cover", "Narrative", "System", "Close"],
                         series=[
                             ChartSeries(name="Focus", values=[8, 12, 9, 6]),
@@ -147,36 +112,39 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                     number=3,
                     title="Design and Content in Sync",
                     content=["Unified palette", "Visual rhythm", "Automated validation"],
-                    visual_direction="Three operating pillars as native cards",
+                    visual_direction="Three operating pillars",
                     layout=LayoutType.DATA_CARDS,
                     family=SlideFamily.PILLARS,
+                    role=PageRole.EXPANSION,
                     eyebrow="SYSTEM",
                     takeaway="Palette, rhythm, and validation stay in one system.",
                     source_note="Demo fixture",
+                    speaker_notes="Three modules, one operating system.",
                 ),
                 StoryPage(
                     number=4,
                     title="Make Every Presentation Count",
                     content=["Complete, validate, and deliver"],
-                    visual_direction="Closing recommendation, not a second hero photograph",
+                    visual_direction="Closing recommendation",
                     layout=LayoutType.TEXT,
                     family=SlideFamily.CONCLUSION,
+                    role=PageRole.CLOSE,
                     eyebrow="NEXT STEP",
                     takeaway="Deliver only after validation and a human pass.",
                     source_note="Demo fixture",
+                    speaker_notes="Close on the delivery gate.",
                 ),
             ],
             design=DesignSpec(
-                style_name="Warm Narrative",
-                mood="Warm, human, and approachable",
-                primary="#E8603C",
-                secondary="#F5C24B",
-                background="#FFF8F0",
-                text="#3D2B1F",
-                accent="#3B8C88",
-                illustration_style="Contemporary warm flat illustration",
+                style_name="consulting",
+                mood="Analytical, compressed, calm",
+                primary="#1F4E79",
+                secondary="#44505C",
+                background="#F7F8FA",
+                text="#1B242C",
+                accent="#1F4E79",
+                illustration_style="vector_first",
+                typography_profile="consulting",
             ),
         )
-    if schema is ImagePlan:
-        return ImagePlan(images=[])
     raise ValueError(f"Unsupported demo schema: {schema.__name__}")

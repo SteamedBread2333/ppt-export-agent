@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import functools
 import platform
+import re
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 from pptx import Presentation
@@ -99,7 +101,7 @@ def validate_presentation(
             )
         if page:
             for item in page.content:
-                if item not in slide_text:
+                if not _contains_copy(slide_text, item):
                     issues.append(
                         ValidationIssue(
                             code="missing_content",
@@ -173,11 +175,80 @@ def validate_presentation(
                 severity="warning",
             )
         )
+    issues.extend(_package_audit(path, story))
     return ValidationReport(
         valid=not any(issue.severity == "error" for issue in issues),
         issues=issues,
         pptx_path=str(path),
     )
+
+
+def _package_audit(path: Path, story: list[StoryPage]) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        slides = [
+            name
+            for name in names
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        ]
+        notes = [
+            name
+            for name in names
+            if name.startswith("ppt/notesSlides/") and name.endswith(".xml")
+        ]
+        charts = [name for name in names if "/charts/chart" in name and name.endswith(".xml")]
+        if len(slides) != len(story):
+            issues.append(
+                ValidationIssue(
+                    code="package_slide_count",
+                    message=f"Package slide XML count {len(slides)} != story {len(story)}",
+                )
+            )
+        if len(notes) < len(story):
+            issues.append(
+                ValidationIssue(
+                    code="missing_notes",
+                    message="Each slide must have a speaker notes part",
+                )
+            )
+        expected_charts = sum(
+            int(page.chart is not None) + int(page.chart_secondary is not None) for page in story
+        )
+        if expected_charts and len(charts) < expected_charts:
+            issues.append(
+                ValidationIssue(
+                    code="missing_charts",
+                    message=f"Expected {expected_charts} native charts, found {len(charts)}",
+                )
+            )
+        xml_blob = " ".join(
+            archive.read(name).decode("utf-8", errors="ignore")
+            for name in names
+            if name.endswith(".xml")
+        )
+        if re.search(r"undefined|NaN|\[object", xml_blob):
+            issues.append(
+                ValidationIssue(
+                    code="unresolved_placeholder",
+                    message="Package XML contains undefined, NaN, or [object",
+                )
+            )
+    if path.stat().st_size > 25 * 1024 * 1024:
+        issues.append(
+            ValidationIssue(
+                code="package_too_large",
+                message="PPTX exceeds 25MB; bitmaps may be duplicated",
+                severity="warning",
+            )
+        )
+    return issues
+
+
+def _contains_copy(slide_text: str, item: str) -> bool:
+    if item in slide_text:
+        return True
+    return re.sub(r"\s+", "", item) in re.sub(r"\s+", "", slide_text)
 
 
 def _shape_colors(slide) -> set[str]:
