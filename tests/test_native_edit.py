@@ -113,6 +113,68 @@ def test_native_edit_keeps_template_art_and_size(tmp_path: Path) -> None:
     assert not any(issue.code in {"card_soup", "cramped_header", "empty_bottom"} for issue in review.issues)
 
 
+def test_native_edit_clears_unused_template_copy(tmp_path: Path) -> None:
+    template = tmp_path / "lorem.pptx"
+    source = Presentation()
+    source.slide_width = Inches(13.333)
+    source.slide_height = Inches(7.5)
+    slide = source.slides.add_slide(source.slide_layouts[6])
+    title = slide.shapes.add_textbox(Inches(0.5), Inches(0.4), Inches(8), Inches(1))
+    title.text_frame.text = "Old title"
+    body = slide.shapes.add_textbox(Inches(0.5), Inches(1.8), Inches(8), Inches(1.2))
+    body.text_frame.text = "Keep this slot"
+    leftover = slide.shapes.add_textbox(Inches(0.5), Inches(3.2), Inches(8), Inches(1.2))
+    leftover.text_frame.text = "Lorem ipsum dolor sit amet"
+    source.save(template)
+
+    pages = [
+        _page(1, "Decision title", ["Only one claim"], role=PageRole.COVER),
+    ]
+    path = tmp_path / "cleared.pptx"
+    render_presentation(pages, _design(), {}, path, AgentConfig(), template_path=template)
+    texts = [
+        shape.text.strip()
+        for slide in Presentation(path).slides
+        for shape in slide.shapes
+        if getattr(shape, "has_text_frame", False)
+    ]
+    assert "Decision title" in texts
+    assert "Only one claim" in texts
+    assert not any("Lorem ipsum" in text for text in texts)
+
+
+def test_native_edit_keeps_equal_length_template_order(tmp_path: Path) -> None:
+    template = tmp_path / "ordered.pptx"
+    source = Presentation()
+    source.slide_width = Inches(13.333)
+    source.slide_height = Inches(7.5)
+    for label in ("Cover slot", "Body slot", "Close slot"):
+        slide = source.slides.add_slide(source.slide_layouts[6])
+        box = slide.shapes.add_textbox(Inches(0.5), Inches(0.4), Inches(8), Inches(1))
+        box.text_frame.text = label
+    source.save(template)
+
+    pages = [
+        _page(1, "Cover from first template page", ["Open on the decision"], role=PageRole.COVER),
+        _page(2, "Body stays in the middle", ["Keep template order"], role=PageRole.CONTEXT),
+        _page(3, "Close from last template page", ["End on the ask"], role=PageRole.CLOSE),
+    ]
+    path = tmp_path / "ordered-edit.pptx"
+    render_presentation(pages, _design(), {}, path, AgentConfig(), template_path=template)
+    presentation = Presentation(path)
+    titles = []
+    for slide in presentation.slides:
+        texts = [
+            shape.text
+            for shape in slide.shapes
+            if getattr(shape, "has_text_frame", False) and shape.text
+        ]
+        titles.append(texts[0] if texts else "")
+    assert titles[0].startswith("Cover from first")
+    assert titles[1].startswith("Body stays")
+    assert titles[2].startswith("Close from last")
+
+
 def test_native_edit_assigns_chart_pages_to_chart_slides(tmp_path: Path) -> None:
     template = tmp_path / "charts.pptx"
     source = Presentation()

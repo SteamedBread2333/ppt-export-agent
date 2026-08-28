@@ -85,6 +85,8 @@ def edit_template(
 
 def _assign_sources(presentation, pages: list[StoryPage]) -> list[int]:
     inventory = [_info(slide, index) for index, slide in enumerate(presentation.slides)]
+    if len(inventory) == len(pages):
+        return [item.index for item in inventory]
     used: set[int] = set()
     assigned: list[int] = []
     last = max(len(inventory) - 1, 0)
@@ -232,6 +234,8 @@ def _edit_slide(presentation, slide, page: StoryPage) -> None:
             _put_text(shape, value)
         if len(chunks) > len(flowing):
             _put_paragraphs(flowing[-1], chunks[len(flowing) - 1 :])
+        for shape in flowing[len(chunks) :]:
+            _put_text(shape, "")
     _replace_chart(slide, page.chart)
     _replace_table(slide, page)
     speaker_notes(slide, page)
