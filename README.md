@@ -168,8 +168,12 @@ pending = await agent.resume(pending["thread_id"], {"action": "use"})
 result = await agent.resume(pending["thread_id"], {"action": "approve"})
 ```
 
-When a template is supplied, sample slides are removed while theme, master, and
-layout relationships are retained. The output is normalized to a 16:9 canvas.
+When a template is supplied, the agent **takes pages from that deck and edits
+them in place**. Layout, theme, master, decorative shapes, and slide size stay
+with the template. Story copy is written into existing title and body boxes;
+existing charts and tables are updated in place. Extra story pages clone the
+best-matching template slide. Recipe compose (cards, hairlines, 16:9 canvas) is
+not painted on top.
 
 ## Asset Normalization
 

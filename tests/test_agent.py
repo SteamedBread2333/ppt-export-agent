@@ -152,6 +152,10 @@ async def test_template_still_renders(tmp_path: Path) -> None:
 
     presentation = Presentation(completed["artifacts"]["pptx_path"])
     assert len(presentation.slides) == 4
+    assert presentation.slide_width == Inches(10)
+    assert completed["validation"]["valid"] is True
+    marker = Path(completed["artifacts"]["project_dir"]) / "template.json"
+    assert marker.exists()
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,8 @@ def validate_presentation(
     story: list[StoryPage],
     design: DesignSpec,
     image_paths: dict[str, str],
+    *,
+    native_edit: bool = False,
 ) -> ValidationReport:
     path = Path(pptx_path).expanduser().resolve()
     issues: list[ValidationIssue] = []
@@ -126,47 +128,48 @@ def validate_presentation(
                 break
 
     palette = design.palette_hex()
-    allowed_fonts = design.allowed_font_names()
-    for slide_index, slide in enumerate(presentation.slides, 1):
-        unexpected_colors = _shape_colors(slide) - palette
-        if unexpected_colors:
-            issues.append(
-                ValidationIssue(
-                    code="palette_violation",
-                    message=(
-                        "Found colors outside the approved palette: "
-                        f"{', '.join(sorted(unexpected_colors))}"
-                    ),
-                    page=slide_index,
+    if not native_edit:
+        allowed_fonts = design.allowed_font_names()
+        for slide_index, slide in enumerate(presentation.slides, 1):
+            unexpected_colors = _shape_colors(slide) - palette
+            if unexpected_colors:
+                issues.append(
+                    ValidationIssue(
+                        code="palette_violation",
+                        message=(
+                            "Found colors outside the approved palette: "
+                            f"{', '.join(sorted(unexpected_colors))}"
+                        ),
+                        page=slide_index,
+                    )
                 )
-            )
-        used_fonts = _shape_fonts(slide)
-        unexpected_fonts = {font for font in used_fonts if font.casefold() not in allowed_fonts}
-        if unexpected_fonts:
-            issues.append(
-                ValidationIssue(
-                    code="font_violation",
-                    message=(
-                        "Found fonts outside the DESIGN contract: "
-                        f"{', '.join(sorted(unexpected_fonts))}"
-                    ),
-                    page=slide_index,
+            used_fonts = _shape_fonts(slide)
+            unexpected_fonts = {font for font in used_fonts if font.casefold() not in allowed_fonts}
+            if unexpected_fonts:
+                issues.append(
+                    ValidationIssue(
+                        code="font_violation",
+                        message=(
+                            "Found fonts outside the DESIGN contract: "
+                            f"{', '.join(sorted(unexpected_fonts))}"
+                        ),
+                        page=slide_index,
+                    )
                 )
-            )
 
-    font_chains = [
-        [design.title_font, *design.title_font_fallbacks],
-        [design.body_font, *design.body_font_fallbacks],
-    ]
-    for chain in font_chains:
-        if not any(_font_installed(font) for font in chain):
-            issues.append(
-                ValidationIssue(
-                    code="font_unavailable",
-                    message=f"Font fallback chain is unavailable: {' → '.join(chain)}",
-                    severity="warning",
+        font_chains = [
+            [design.title_font, *design.title_font_fallbacks],
+            [design.body_font, *design.body_font_fallbacks],
+        ]
+        for chain in font_chains:
+            if not any(_font_installed(font) for font in chain):
+                issues.append(
+                    ValidationIssue(
+                        code="font_unavailable",
+                        message=f"Font fallback chain is unavailable: {' → '.join(chain)}",
+                        severity="warning",
+                    )
                 )
-            )
     if len(palette) < 4:
         issues.append(
             ValidationIssue(
@@ -175,7 +178,7 @@ def validate_presentation(
                 severity="warning",
             )
         )
-    issues.extend(_package_audit(path, story))
+    issues.extend(_package_audit(path, story, native_edit=native_edit))
     return ValidationReport(
         valid=not any(issue.severity == "error" for issue in issues),
         issues=issues,
@@ -183,7 +186,7 @@ def validate_presentation(
     )
 
 
-def _package_audit(path: Path, story: list[StoryPage]) -> list[ValidationIssue]:
+def _package_audit(path: Path, story: list[StoryPage], *, native_edit: bool = False) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
@@ -215,7 +218,7 @@ def _package_audit(path: Path, story: list[StoryPage]) -> list[ValidationIssue]:
         expected_charts = sum(
             int(page.chart is not None) + int(page.chart_secondary is not None) for page in story
         )
-        if expected_charts and len(charts) < expected_charts:
+        if not native_edit and expected_charts and len(charts) < expected_charts:
             issues.append(
                 ValidationIssue(
                     code="missing_charts",

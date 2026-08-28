@@ -245,6 +245,9 @@ would wrap vertically in a narrow box.
 `token()` sets `wrap=False` and widens within the canvas. `repair_guards`
 rebuilds until clean or `max_repair_attempts`. Shrinking type is a last resort.
 
+When `template_path` is set, wrap-width rebuild is skipped so in-place template
+edits are not destroyed.
+
 Writes `guards.json`.
 
 ### Phase 5 — Visual review
@@ -276,7 +279,7 @@ Unzip-level checks:
 
 - slide XML count equals the outline
 - each slide has a `notesSlide` (speaker intent)
-- native chart parts ≥ narrative requirement
+- native chart parts ≥ narrative requirement (skipped for native-edit templates)
 - no `undefined` / `NaN` / `[object`
 - package size sane (no duplicated bitmaps)
 
@@ -428,7 +431,13 @@ The asset layer:
 
 Optional `template_path` and `reference_images` on `start()`:
 
-- template: blank sample slides, keep theme/master, compose onto 16:9
+- template: take pages from the deck, clone if the outline is longer, edit
+  titles / body / charts / tables in place; keep slide size, theme, master, and
+  decorative shapes. Do not extract the template as a style source and do not
+  compose recipe pages onto a blank 16:9 canvas.
+- XML audit skips recipe palette / font / chart-count checks for this branch;
+  volume review skips token geometry (`card_soup`, cramped header, empty bottom,
+  footer lock). Overflow is still checked against the template canvas.
 - references: do not skip recipe confirmation; consulting stays vector-first
 
 This is the “native-edit an existing deck” branch, not a fourth HITL style

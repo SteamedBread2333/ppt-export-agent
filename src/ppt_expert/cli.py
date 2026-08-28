@@ -13,7 +13,7 @@ from watchdog.observers import Observer
 from ppt_expert.agent import create_ppt_agent
 from ppt_expert.config import AgentConfig
 from ppt_expert.demo_runtime import fake_structured_generate
-from ppt_expert.models import DesignSpec, OutlinePlan, ReferenceAnalysis, StoryPage
+from ppt_expert.models import DesignSpec, OutlinePlan, StoryPage
 from ppt_expert.pptx import render_presentation
 from ppt_expert.runtime import HostRuntime
 from ppt_expert.validation import validate_presentation, write_validation_report
@@ -183,7 +183,10 @@ def _validate_project(project_dir: Path) -> tuple[str, bool]:
     if not pptx_files:
         raise typer.BadParameter(f"No PPTX found in {project}")
     image_paths = _image_paths(project, story)
-    report = validate_presentation(pptx_files[0], outline, story, design, image_paths)
+    native_edit = _native_edit(project)
+    report = validate_presentation(
+        pptx_files[0], outline, story, design, image_paths, native_edit=native_edit
+    )
     report_path = write_validation_report(report, project)
     return report_path, report.valid
 
@@ -198,15 +201,7 @@ def _rebuild_project(project_dir: Path) -> tuple[str, bool]:
     pptx_files = list(project.glob("*.pptx"))
     output_path = pptx_files[0] if pptx_files else project / f"{project.name}.pptx"
     image_paths = _image_paths(project, story)
-    template_path = None
-    selection_path = project / "reference-selection.json"
-    references_path = project / "references.json"
-    if selection_path.exists() and references_path.exists():
-        selection = json.loads(selection_path.read_text("utf-8"))
-        if selection.get("decision") == "use":
-            template_path = ReferenceAnalysis.model_validate_json(
-                references_path.read_text("utf-8")
-            ).template_path
+    template_path = _template_path(project)
     render_presentation(
         story,
         design,
@@ -237,10 +232,31 @@ def _image_paths(project: Path, story: list[StoryPage]) -> dict[str, str]:
     return image_paths
 
 
+def _template_marker(project: Path) -> dict:
+    marker = project / "template.json"
+    if not marker.exists():
+        return {}
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _native_edit(project: Path) -> bool:
+    return _template_marker(project).get("mode") == "native_edit"
+
+
+def _template_path(project: Path) -> str | None:
+    path = _template_marker(project).get("path")
+    return str(path) if path else None
+
+
 def _is_build_input(project: Path, changed: Path) -> bool:
     return changed.name in {
         "story.json",
         "design.json",
+        "template.json",
         "references.json",
         "reference-selection.json",
     } or (

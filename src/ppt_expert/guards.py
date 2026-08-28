@@ -13,7 +13,9 @@ _SHORT = re.compile(
 )
 
 
-def inspect_guards(pptx_path: str | Path) -> GuardReport:
+def inspect_guards(pptx_path: str | Path, *, native_edit: bool = False) -> GuardReport:
+    if native_edit:
+        return GuardReport(warnings=[])
     presentation = Presentation(str(pptx_path))
     warnings: list[GuardWarning] = []
     for index, slide in enumerate(presentation.slides, 1):

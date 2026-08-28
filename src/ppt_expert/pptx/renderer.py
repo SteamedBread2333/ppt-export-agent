@@ -21,10 +21,12 @@ def render_presentation(
     template_path: str | Path | None = None,
     tokens: DesignTokens | None = None,
 ) -> str:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    prs = Presentation(str(template_path)) if template_path else Presentation()
     if template_path:
-        _clear_slides(prs)
+        from ppt_expert.pptx.native_edit import edit_template
+
+        return edit_template(pages, design, image_paths, output_path, template_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    prs = Presentation()
     tokens = tokens or _tokens_from_design(design)
     prs.slide_width = Inches(tokens.page.w)
     prs.slide_height = Inches(tokens.page.h)
@@ -36,8 +38,7 @@ def render_presentation(
             placeholder._element.getparent().remove(placeholder._element)
         dark = page.is_dark()
         fill = tokens.colors.dark_bg if dark else tokens.colors.bg
-        if not template_path:
-            paint_background(slide, fill, prs.slide_width, prs.slide_height)
+        paint_background(slide, fill, prs.slide_width, prs.slide_height)
         canvas = Canvas(slide=slide, tokens=tokens, dark=dark)
         compose_slide(canvas, page, image_paths.get(page.image_id or ""))
         speaker_notes(slide, page)
@@ -82,10 +83,3 @@ def _write_metadata(presentation: Presentation, design: DesignSpec) -> None:
     core.subject = design.mood
     core.author = "PPT Expert"
     core.category = design.typography_profile
-
-
-def _clear_slides(presentation: Presentation) -> None:
-    slide_ids = presentation.slides._sldIdLst
-    for slide_id in list(slide_ids):
-        presentation.part.drop_rel(slide_id.rId)
-        slide_ids.remove(slide_id)

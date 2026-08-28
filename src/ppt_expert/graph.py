@@ -213,19 +213,27 @@ def build_graph(checkpointer):
                 )
             )
         path = Path(state["project_dir"]) / f"{state['project_name']}.pptx"
+        template_path = state.get("template_path")
+        if template_path:
+            (Path(state["project_dir"]) / "template.json").write_text(
+                json.dumps({"path": template_path, "mode": "native_edit"}, indent=2),
+                encoding="utf-8",
+            )
         rendered = render_presentation(
             pages,
             design,
             image_paths,
             path,
             runtime.context.config,
-            template_path=state.get("template_path"),
+            template_path=template_path,
             tokens=tokens,
         )
         return {"pptx_path": rendered, "image_paths": image_paths}
 
     def guard_text(state: PPTAgentState) -> dict:
-        report = inspect_guards(state["pptx_path"])
+        report = inspect_guards(
+            state["pptx_path"], native_edit=bool(state.get("template_path"))
+        )
         write_guard_report(report, state["project_dir"])
         return {"guards": report.model_dump(mode="json")}
 
@@ -251,6 +259,7 @@ def build_graph(checkpointer):
             state["project_dir"],
             visual_review=env.visual_review,
             layout_scheme=tokens.layout_scheme,
+            native_edit=bool(state.get("template_path")),
         )
         (Path(state["project_dir"]) / "review.json").write_text(
             review.model_dump_json(indent=2), encoding="utf-8"
@@ -295,6 +304,7 @@ def build_graph(checkpointer):
             [StoryPage.model_validate(item) for item in state["story"]],
             DesignSpec.model_validate(state["design"]),
             state.get("image_paths", {}),
+            native_edit=bool(state.get("template_path")),
         )
         write_validation_report(report, Path(state["project_dir"]))
         return {"validation": report.model_dump(mode="json")}

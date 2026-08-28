@@ -16,6 +16,7 @@ def review_volume(
     dpi: int = 70,
     visual_review: str = "degraded",
     layout_scheme: LayoutScheme = LayoutScheme.RULES,
+    native_edit: bool = False,
 ) -> VolumeReview:
     presentation = Presentation(str(pptx_path))
     issues: list[QualityIssue] = []
@@ -49,45 +50,49 @@ def review_volume(
     empty_bottom = False
     chrome_locked = True
     footer_ys: list[float] = []
-    for slide_index, slide in enumerate(presentation.slides):
-        bottoms = []
-        for shape in slide.shapes:
-            top = shape.top.inches
-            height = shape.height.inches
-            bottoms.append(top + height)
-            if 7.0 <= top <= 7.3:
-                footer_ys.append(round(top, 2))
-        if bottoms and max(bottoms) < 5.4:
-            empty_bottom = True
+    if not native_edit:
+        for slide_index, slide in enumerate(presentation.slides):
+            bottoms = []
+            for shape in slide.shapes:
+                top = shape.top.inches
+                height = shape.height.inches
+                bottoms.append(top + height)
+                if 7.0 <= top <= 7.3:
+                    footer_ys.append(round(top, 2))
+            if bottoms and max(bottoms) < 5.4:
+                empty_bottom = True
+                issues.append(
+                    QualityIssue(
+                        code="empty_bottom",
+                        message="The lower third of the slide is unintentionally empty",
+                        page=slide_index + 1,
+                        cause="Evidence band does not reach 88–92%",
+                        repair_scope="slide",
+                        acceptance="Content or implication occupies the lower band",
+                    )
+                )
+        if footer_ys and len(set(footer_ys)) > 2:
+            chrome_locked = False
             issues.append(
                 QualityIssue(
-                    code="empty_bottom",
-                    message="The lower third of the slide is unintentionally empty",
-                    page=slide_index + 1,
-                    cause="Evidence band does not reach 88–92%",
-                    repair_scope="slide",
-                    acceptance="Content or implication occupies the lower band",
+                    code="footer_drift",
+                    message="Footer band is not locked across the deck",
+                    cause="Folio y drifted between slides",
+                    repair_scope="token",
+                    acceptance="Footer y is shared",
                 )
             )
-    if footer_ys and len(set(footer_ys)) > 2:
-        chrome_locked = False
-        issues.append(
-            QualityIssue(
-                code="footer_drift",
-                message="Footer band is not locked across the deck",
-                cause="Folio y drifted between slides",
-                repair_scope="token",
-                acceptance="Footer y is shared",
-            )
-        )
     representative = _representatives(pages)
     montage = ""
     pdf = ""
     if visual_review == "full":
         montage, pdf = render_montage(pptx_path, Path(project_dir) / "render", dpi=dpi)
-    issues.extend(inspect_representatives(pptx_path, pages, representative))
+    issues.extend(
+        inspect_representatives(pptx_path, pages, representative, native_edit=native_edit)
+    )
     issues.extend(_numeric_conflicts(pages))
-    issues.extend(_aesthetic_geometry(presentation, pages, layout_scheme))
+    if not native_edit:
+        issues.extend(_aesthetic_geometry(presentation, pages, layout_scheme))
     return VolumeReview(
         rhythm_ok=rhythm_ok,
         no_adjacent_repeat=not adjacent_repeat,
@@ -116,6 +121,8 @@ def inspect_representatives(
     pptx_path: str | Path,
     pages: list[StoryPage],
     numbers: list[int],
+    *,
+    native_edit: bool = False,
 ) -> list[QualityIssue]:
     """Four questions on representative pages: assertion, overflow, columns, implication."""
     issues: list[QualityIssue] = []
@@ -157,10 +164,12 @@ def inspect_representatives(
                         page=number,
                         cause="Element extends past the slide edge",
                         repair_scope="slide",
-                        acceptance="All shapes sit inside the 13.33×7.5in canvas",
+                        acceptance="All shapes sit inside the slide canvas",
                     )
                 )
                 break
+            if native_edit:
+                continue
             if (
                 getattr(shape, "has_text_frame", False)
                 and page.takeaway
@@ -170,6 +179,8 @@ def inspect_representatives(
                 implication_top = shape.top.inches
             if 1.1 <= shape.top.inches <= 1.3 and shape.width.inches > 1.5:
                 xs.append(round(shape.left.inches, 2))
+        if native_edit:
+            continue
         if implication_top is not None and not (6.2 <= implication_top <= 6.55):
             issues.append(
                 QualityIssue(
