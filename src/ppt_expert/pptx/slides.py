@@ -3,6 +3,7 @@ from __future__ import annotations
 from pptx.util import Inches, Pt
 
 from ppt_expert.models import PageRole, StoryPage
+from ppt_expert.pptx.layout import chart_rail, fill_claims, fill_kpis, fill_scenarios
 from ppt_expert.pptx.primitives import (
     Canvas,
     chart_base,
@@ -14,7 +15,6 @@ from ppt_expert.pptx.primitives import (
     motif,
     panel,
     rect,
-    stat_card,
     textbox,
     token,
     vline,
@@ -76,13 +76,7 @@ def cover(canvas: Canvas, page: StoryPage, image_path: str | None = None) -> Non
         )
     kpis = page.kpis[:3]
     if kpis:
-        width = (inner - 0.2 * (len(kpis) - 1)) / len(kpis)
-        hairline(canvas, page_metrics.mx, 4.02, inner)
-        for index, item in enumerate(kpis):
-            left = page_metrics.mx + index * (width + 0.2)
-            if index:
-                vline(canvas, left - 0.1, 4.18, 1.25)
-            stat_card(canvas, item, left, 4.12, width, 1.45)
+        fill_kpis(canvas, kpis, page_metrics.mx, 4.12, inner, 1.45)
     implication(canvas, page.takeaway)
 
 
@@ -91,68 +85,55 @@ def overview(canvas: Canvas, page: StoryPage) -> None:
     page_metrics = canvas.p
     inner = page_metrics.w - 2 * page_metrics.mx
     items = page.content[:4]
-    count = max(1, len(items))
-    width = inner / count
     height = 2.35 if page.kpis else 3.55
-    for index, item in enumerate(items):
-        left = page_metrics.mx + index * width
-        if index:
-            vline(canvas, left, top + 0.08, height - 0.2)
-        mini_label(canvas, f"{index + 1:02d}", left + 0.18, top + 0.06, width - 0.36, canvas.muted)
-        _claim(canvas, item, left + 0.18, top + 0.36, width - 0.4, height - 0.5)
+    fill_claims(canvas, items, page_metrics.mx, top, inner, height, _on_claim(canvas))
     if page.kpis:
-        kpis = page.kpis[:4]
-        k_top = top + height + 0.22
-        k_h = 1.28
-        hairline(canvas, page_metrics.mx, k_top, inner)
-        k_w = inner / len(kpis)
-        for index, item in enumerate(kpis):
-            left = page_metrics.mx + index * k_w
-            if index:
-                vline(canvas, left, k_top + 0.16, k_h - 0.28)
-            stat_card(canvas, item, left + 0.12, k_top + 0.1, k_w - 0.2, k_h - 0.12)
+        fill_kpis(
+            canvas,
+            page.kpis[:4],
+            page_metrics.mx,
+            top + height + 0.22,
+            inner,
+            1.28,
+        )
     implication(canvas, page.takeaway)
 
 
 def context(canvas: Canvas, page: StoryPage) -> None:
     top = header(canvas, page)
-    page_metrics = canvas.p
-    inner = page_metrics.w - 2 * page_metrics.mx
-    band_h = page_metrics.implication_y - top - 0.22
-    chart_w = inner * 0.6
-    rail_left = page_metrics.mx + chart_w + 0.28
-    rail_w = inner - chart_w - 0.28
-    if page.chart:
-        chart_base(canvas, page.chart, page_metrics.mx, top, chart_w, band_h)
-        vline(canvas, page_metrics.mx + chart_w + 0.12, top + 0.06, band_h - 0.12)
-    else:
-        rail_left = page_metrics.mx
-        rail_w = inner
-    y = top
+    split = chart_rail(canvas, top, has_chart=bool(page.chart))
+    if page.chart and split.chart:
+        chart_base(canvas, page.chart, *split.chart)
+    if split.divider == "vline":
+        rail_left, rail_top, _rail_w, rail_h = split.rail
+        vline(canvas, rail_left - 0.16, rail_top + 0.06, rail_h - 0.12)
+    rail_left, rail_top, rail_w, rail_h = split.rail
+    y = rail_top
     if page.takeaway:
-        take_h = 1.05
+        take_h = min(1.05, rail_h * 0.28)
         textbox(
             canvas,
             page.takeaway,
             rail_left,
             y,
             rail_w,
-            take_h - 0.12,
+            take_h - 0.08,
             16,
             canvas.ink,
             bold=True,
         )
         y += take_h
-        hairline(canvas, rail_left, y, rail_w)
-        y += 0.16
     remaining = list(page.content[:4])
-    rows = max(len(remaining), 1)
-    row_h = max(0.72, (top + band_h - y) / rows)
-    for index, item in enumerate(remaining):
-        _claim(canvas, item, rail_left, y + 0.04, rail_w, row_h - 0.12)
-        y += row_h
-        if index < len(remaining) - 1:
-            hairline(canvas, rail_left, y, rail_w)
+    if remaining:
+        fill_claims(
+            canvas,
+            remaining,
+            rail_left,
+            y,
+            rail_w,
+            max(rail_top + rail_h - y, 0.8),
+            _on_claim(canvas),
+        )
 
 
 def evidence(canvas: Canvas, page: StoryPage) -> None:
@@ -252,26 +233,16 @@ def expansion(canvas: Canvas, page: StoryPage) -> None:
     top = header(canvas, page)
     page_metrics = canvas.p
     inner = page_metrics.w - 2 * page_metrics.mx
-    items = page.content[:4]
-    count = max(1, len(items))
-    if count == 4:
-        cells = [(0, 0), (1, 0), (0, 1), (1, 1)]
-        cols, rows = 2, 2
-    else:
-        cells = [(index, 0) for index in range(count)]
-        cols, rows = count, 1
-    col_w = inner / cols
-    row_h = min(2.5 if rows == 2 else 3.4, (page_metrics.implication_y - top - 0.18) / rows)
-    if rows == 2:
-        hairline(canvas, page_metrics.mx, top + row_h, inner)
-    if cols == 2:
-        vline(canvas, page_metrics.mx + col_w, top + 0.06, row_h * rows - 0.12)
-    for index, item in enumerate(items):
-        column, row = cells[index]
-        left = page_metrics.mx + column * col_w
-        card_top = top + row * row_h
-        mini_label(canvas, f"{index + 1:02d}", left + 0.18, card_top + 0.12, col_w - 0.36, canvas.muted)
-        _claim(canvas, item, left + 0.18, card_top + 0.4, col_w - 0.4, row_h - 0.58)
+    fill_claims(
+        canvas,
+        page.content[:4],
+        page_metrics.mx,
+        top,
+        inner,
+        page_metrics.implication_y - top - 0.18,
+        _on_claim(canvas),
+        grid=True,
+    )
     implication(canvas, page.takeaway)
 
 
@@ -283,24 +254,9 @@ def scenario(canvas: Canvas, page: StoryPage) -> None:
     if not columns:
         expansion(canvas, page)
         return
-    gap = 0.14
-    width = (inner - gap * (len(columns) - 1)) / len(columns)
     copy_h = 0.46 if page.content else 0.0
     height = page_metrics.implication_y - top - 0.18 - copy_h
-    for index, column in enumerate(columns):
-        left = page_metrics.mx + index * (width + gap)
-        fill = canvas.c.accent if column.featured else None
-        ink = "#FFFFFF" if column.featured else canvas.ink
-        muted = canvas.c.dark_muted if column.featured else canvas.muted
-        if fill:
-            rect(canvas, left, top, width, height, fill)
-        else:
-            if index:
-                vline(canvas, left - gap / 2, top + 0.1, height - 0.2)
-        textbox(canvas, column.name, left + 0.16, top + 0.18, width - 0.32, 0.36, 16, ink, bold=True)
-        token(canvas, column.probability, left + 0.14, top + 0.54, width - 0.28, 0.3, 13, muted)
-        body = "\n".join(part for part in (column.trigger, column.outcome, column.implication) if part)
-        textbox(canvas, body, left + 0.14, top + 0.96, width - 0.28, height - 1.15, 13, ink)
+    fill_scenarios(canvas, columns, page_metrics.mx, top, inner, height)
     if page.content:
         _copy_band(canvas, page, page_metrics.implication_y - 0.62)
     implication(canvas, page.takeaway)
@@ -317,8 +273,6 @@ def close(canvas: Canvas, page: StoryPage) -> None:
         textbox(canvas, item, page_metrics.mx, y, inner, 0.5, 18, canvas.ink)
         y += 0.62
     if page.milestones:
-        from ppt_expert.pptx.primitives import hairline
-
         hairline(canvas, page_metrics.mx, 5.08, inner)
         span = inner / max(len(page.milestones[:4]), 1)
         for index, item in enumerate(page.milestones[:4]):
@@ -347,20 +301,39 @@ def _copy_band(canvas: Canvas, page: StoryPage, top: float | None = None) -> Non
     )
 
 
-def _claim(canvas: Canvas, item: str, left, top, width, height) -> None:
+def _on_claim(canvas: Canvas):
+    def write(item, left, top, width, height, **colors):
+        _claim(canvas, item, left, top, width, height, **colors)
+
+    return write
+
+
+def _claim(
+    canvas: Canvas,
+    item: str,
+    left,
+    top,
+    width,
+    height,
+    *,
+    ink: str | None = None,
+    body: str | None = None,
+) -> None:
+    ink = ink or canvas.ink
+    body = body or canvas.ink2
     colon = item.find("：")
     if colon < 0:
         colon = item.find(":")
     if colon < 1 or colon > 18:
-        textbox(canvas, item, left, top, width, height, 15, canvas.ink)
+        textbox(canvas, item, left, top, width, height, 15, ink)
         return
     label, rest = item[: colon + 1], item[colon + 1 :]
-    textbox(canvas, label, left, top, width, 0.36, 16, canvas.ink, bold=True)
+    textbox(canvas, label, left, top, width, 0.36, 16, ink, bold=True)
     risk_at = rest.find("风险")
     if risk_at < 0:
-        textbox(canvas, rest, left, top + 0.4, width, height - 0.42, 14, canvas.ink2)
+        textbox(canvas, rest, left, top + 0.4, width, height - 0.42, 14, body)
         return
-    textbox(canvas, rest[:risk_at], left, top + 0.4, width, max(0.4, height - 0.88), 13, canvas.ink2)
+    textbox(canvas, rest[:risk_at], left, top + 0.4, width, max(0.4, height - 0.88), 13, body)
     textbox(
         canvas,
         rest[risk_at:],
@@ -392,18 +365,20 @@ def _table(canvas: Canvas, page: StoryPage, left, top, width, height) -> None:
 def _cell(canvas: Canvas, cell, text: str, fill: str, color: str, bold: bool) -> None:
     from pptx.enum.text import MSO_ANCHOR
 
-    from ppt_expert.pptx.primitives import _apply_fonts, rgb
+    from ppt_expert.pptx.primitives import _apply_fonts, _apply_paragraph_font, rgb
 
     cell.text = text
     cell.fill.solid()
     cell.fill.fore_color.rgb = rgb(fill)
     cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+    latin = canvas.f.num if any(ch.isdigit() for ch in text) else canvas.f.cn
     for paragraph in cell.text_frame.paragraphs:
         paragraph.font.size = Pt(12)
         paragraph.font.bold = bold
         paragraph.font.color.rgb = rgb(color)
+        _apply_paragraph_font(paragraph, latin, canvas.f.cn)
         for run in paragraph.runs:
-            _apply_fonts(run, canvas.f.num if any(ch.isdigit() for ch in text) else canvas.f.cn, canvas.f.cn)
+            _apply_fonts(run, latin, canvas.f.cn)
             run.font.size = Pt(12)
             run.font.bold = bold
             run.font.color.rgb = rgb(color)

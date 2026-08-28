@@ -41,6 +41,19 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
         interrupted = await agent.start("Create a PPT Expert workflow overview", project_name="demo")
         assert interrupted["status"] == "interrupted"
         assert interrupted["request"]["type"] == "recipe_confirmation"
+        options = interrupted["request"]["options"]
+        assert interrupted["request"]["recommended"] == options[0]["id"]
+        assert options[0]["recommended"] is True
+        assert {item["id"] for item in options} == {
+            "consulting",
+            "work_report",
+            "civic",
+            "art_market",
+            "editorial",
+            "history",
+            "open",
+        }
+        assert interrupted["request"]["reason"]
         assert interrupted["request"]["recipe_id"]
         assert interrupted["request"]["palette"]
 
@@ -155,5 +168,28 @@ async def test_reference_images_do_not_block_recipe_gate(tmp_path: Path) -> None
     ) as agent:
         pending = await agent.start("reference test", reference_images=[reference])
         assert pending["request"]["type"] == "recipe_confirmation"
+        assert pending["request"]["options"]
         completed = await _complete(agent, pending)
+    assert completed["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_user_can_override_the_recommended_recipe(tmp_path: Path) -> None:
+    config = AgentConfig(
+        output_root=tmp_path / "outputs",
+        checkpoint_path=tmp_path / "checkpoints.sqlite3",
+        enable_libreoffice_preview=False,
+    )
+    async with create_ppt_agent(
+        HostRuntime(structured_generate=fake_structured_generate), config
+    ) as agent:
+        pending = await agent.start("Create a PPT Expert workflow overview", project_name="override")
+        recommended = pending["request"]["recommended"]
+        assert recommended
+        pending = await agent.resume(pending["thread_id"], {"action": "history"})
+        assert pending["request"]["type"] == "delivery_confirmation"
+        state = await agent.state(pending["thread_id"])
+        assert state["recipe_id"] == "history"
+        assert recommended != "history"
+        completed = await agent.resume(pending["thread_id"], {"action": "approve"})
     assert completed["status"] == "completed"

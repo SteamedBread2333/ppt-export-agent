@@ -25,7 +25,8 @@ app = typer.Typer(help="Host-model-powered LangGraph PPT Expert Agent")
 def demo(
     output: Annotated[Path, typer.Option(help="Output directory")] = Path("outputs"),
     recipe: Annotated[
-        str | None, typer.Option(help="Recipe action: use or open")
+        str | None,
+        typer.Option(help="Recipe id, or 'use' for the recommended match"),
     ] = None,
     delivery: Annotated[
         str | None, typer.Option(help="Delivery decision: approve or revise")
@@ -56,9 +57,14 @@ def demo(
                     typer.echo(json.dumps(request["intent"], ensure_ascii=False, indent=2))
                     result = await agent.resume(result["thread_id"], {"action": "continue"})
                 elif request["type"] == "recipe_confirmation":
-                    typer.echo(f"Recipe: {request['recipe_id']}")
-                    typer.echo(request["visual_proposition"])
-                    action = recipe or typer.prompt("Use this recipe or open", default="use")
+                    recommended = request.get("recommended") or request.get("recipe_id")
+                    typer.echo(f"Recommended: {recommended}")
+                    if request.get("reason"):
+                        typer.echo(request["reason"])
+                    for option in request.get("options") or []:
+                        mark = " [recommended]" if option.get("recommended") else ""
+                        typer.echo(f"  {option['id']}{mark} — {option['label']}")
+                    action = recipe or typer.prompt("Choose style", default=str(recommended))
                     result = await agent.resume(result["thread_id"], {"action": action})
                 elif request["type"] == "delivery_confirmation":
                     typer.echo(

@@ -11,7 +11,7 @@ from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-from ppt_expert.models import ChartSpec, ChartType, DesignTokens, KPIItem, StoryPage
+from ppt_expert.models import ChartSpec, ChartType, DesignTokens, KPIItem, LayoutScheme, StoryPage
 
 CHART_TYPES = {
     ChartType.LINE: XL_CHART_TYPE.LINE,
@@ -43,6 +43,10 @@ class Canvas:
     @property
     def p(self):
         return self.tokens.page
+
+    @property
+    def scheme(self) -> LayoutScheme:
+        return self.tokens.layout_scheme
 
     @property
     def ink(self) -> str:
@@ -123,6 +127,15 @@ def _apply_fonts(run, latin: str, east_asian: str) -> None:
         element.set("typeface", typeface)
 
 
+def _apply_paragraph_font(paragraph, latin: str, east_asian: str) -> None:
+    # LibreOffice ignores run-level typefaces when choosing a CJK fallback and
+    # resolves missing fonts per paragraph via a:pPr/a:defRPr; without a
+    # typeface there it picks Traditional Chinese faces (LiHeiPro) whose
+    # simplified-glyph gaps render as tofu boxes.
+    def_rpr = paragraph._p.get_or_add_pPr().get_or_add_defRPr()
+    _typeface(def_rpr, latin, east_asian)
+
+
 def textbox(
     canvas: Canvas,
     text: str,
@@ -157,6 +170,7 @@ def textbox(
     paragraph.font.size = Pt(size)
     paragraph.font.bold = bold
     paragraph.font.color.rgb = rgb(color or canvas.ink)
+    _apply_paragraph_font(paragraph, latin, east)
     for run in paragraph.runs:
         _apply_fonts(run, latin, east)
         run.font.size = Pt(size)

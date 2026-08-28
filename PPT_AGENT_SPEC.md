@@ -125,8 +125,18 @@ audience override recipe defaults when they conflict.
 | `open`         | No canonical match                   | Clear, composed, purpose-built              |
 
 Each recipe encodes: three adjectives, a tension, role-named color tokens,
-font roles (`cn` / `num` / `display`), image behavior, and a visual
-proposition used to settle later design conflicts.
+font roles (`cn` / `num` / `display`), image behavior, a **body layout scheme**,
+and a visual proposition used to settle later design conflicts.
+
+| Recipe         | Body layout |
+|----------------|-------------|
+| `consulting`   | `rules` — type, hairlines, column rules |
+| `work_report`  | `stack` — operational bands, not a plus-sign grid |
+| `civic`        | `banner` — full-width ceremonial bands |
+| `art_market`   | `blocks` — gapped poster fills |
+| `editorial`    | `spread` — wide gutter, asymmetric columns |
+| `history`      | `spine` — vertical chronology |
+| `open`         | `spread` — purpose-built columns |
 
 Five foundations are always in force (see `FOUNDATIONS` in
 `ppt_expert.recipes`):
@@ -147,7 +157,7 @@ parse_intent
       ├─ slots incomplete → intent_confirmation → match_recipe
       └─ slots complete   → match_recipe
                                 │
-                          confirm_recipe  (HITL: use | open)
+                          confirm_recipe  (HITL: all recipes; match is recommended)
                                 │
                           survey_env
                                 │
@@ -176,9 +186,11 @@ Implemented nodes live in `ppt_expert.graph.build_graph`.
    writes `intent.json`, `outline.json`, and `foundations.json`.
 2. `confirm_intent` interrupts only when topic, audience, or objective is empty.
 3. `match_recipe` selects the closest `RecipeId` and writes `StyleBrief` plus
-   `tokens.json` / `style-brief.json`.
-4. `confirm_recipe` interrupts with recipe name, visual proposition, the brief
-   dimensions, and a palette preview. Actions: `use` | `open`.
+   `tokens.json` / `style-brief.json`. The match is a **recommendation**, not a
+   silent commit.
+4. `confirm_recipe` **always** interrupts. The payload lists every recipe;
+   `recommended` / `reason` mark the match; `options[0]` is that recommendation.
+   Actions: a recipe id, or `use` to accept the recommendation.
 
 This is the last preparation before typesetting.
 
@@ -284,7 +296,7 @@ All gates use LangGraph `interrupt()` and resume on the same `thread_id`.
 | Type                     | When                         | Actions                         |
 |--------------------------|------------------------------|---------------------------------|
 | `intent_confirmation`    | Topic / audience / objective empty | `continue`, `edit`        |
-| `recipe_confirmation`    | After match, before compose  | `use`, `open`                   |
+| `recipe_confirmation`    | After match, before compose  | recipe id, or `use` for the recommendation |
 | `delivery_confirmation`  | After XML audit              | `approve`, `revise`             |
 
 There is no style-card gate, no typography-specimen gate, and no
@@ -526,8 +538,8 @@ A nine-slide consulting deck must include:
 - `36.8%` is single-line (`wrap=False`)
 - missing soffice: flow completes, `visual_review: degraded`
 - XML notes present, no `NaN` / `undefined` / `[object`
-- demo e2e interrupts are `recipe_confirmation` then `delivery_confirmation`
-  (`intent_confirmation` only when slots are empty)
+- demo e2e interrupts are `recipe_confirmation` (options + recommended) then
+  `delivery_confirmation` (`intent_confirmation` only when slots are empty)
 
 Human blind preference is **not** a unit test.
 
@@ -544,7 +556,7 @@ Conditional routes:
 
 ```text
 incomplete slots → intent_confirmation
-recipe unconfirmed → recipe_confirmation
+recipe unconfirmed → recipe_confirmation (choose among all recipes; match is recommended)
 guard warnings → rebuild
 review / XML errors → page-level repair (max attempts)
 delivery revise → page-level repair

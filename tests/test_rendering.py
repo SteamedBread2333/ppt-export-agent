@@ -358,7 +358,7 @@ async def test_jpg_sibling_written_by_host_is_discovered_and_converted(tmp_path:
 def test_compose_modules_use_role_tokens_not_stray_hex() -> None:
     allowed = {"#FFFFFF", "#000000"}
     root = Path(__file__).resolve().parents[1] / "src" / "ppt_expert" / "pptx"
-    for name in ("slides.py", "primitives.py", "renderer.py"):
+    for name in ("slides.py", "primitives.py", "renderer.py", "layout.py"):
         found = set(re.findall(r"#[0-9A-Fa-f]{6}", (root / name).read_text(encoding="utf-8")))
         assert found <= allowed, f"{name} has stray hex: {found - allowed}"
 

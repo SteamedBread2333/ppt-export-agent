@@ -80,6 +80,15 @@ class RecipeId(StrEnum):
     OPEN = "open"
 
 
+class LayoutScheme(StrEnum):
+    RULES = "rules"
+    STACK = "stack"
+    BANNER = "banner"
+    BLOCKS = "blocks"
+    SPREAD = "spread"
+    SPINE = "spine"
+
+
 class PageRole(StrEnum):
     COVER = "cover"
     OVERVIEW = "overview"
@@ -175,6 +184,7 @@ class DesignTokens(BaseModel):
     visual_proposition: str
     tension: str
     image_behavior: str = "vector_first"
+    layout_scheme: LayoutScheme = LayoutScheme.RULES
 
     def palette_hex(self) -> set[str]:
         values = list(self.colors.model_dump().values()) + ["#FFFFFF", "#000000"]
@@ -677,6 +687,7 @@ class PPTAgentState(TypedDict, total=False):
     reference_images: list[str]
     intent: dict[str, Any]
     recipe_id: str
+    match_reason: str
     style_brief: dict[str, Any]
     environment: dict[str, Any]
     outline: dict[str, Any]

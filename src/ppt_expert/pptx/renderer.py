@@ -59,9 +59,21 @@ def _tokens_from_design(design: DesignSpec) -> DesignTokens:
             "bg": design.background or tokens.colors.bg,
             "ink": design.text or tokens.colors.ink,
             "ink2": design.secondary or tokens.colors.ink2,
+            "surface": design.surface or tokens.colors.surface,
+            "muted": design.muted or tokens.colors.muted,
+            "positive": design.positive or tokens.colors.positive,
+            "caution": design.warning or tokens.colors.caution,
+            "risk": design.negative or tokens.colors.risk,
         }
     )
-    return tokens.model_copy(update={"colors": colors})
+    fonts = tokens.fonts.model_copy(
+        update={
+            "cn": design.east_asian_font or design.body_font or tokens.fonts.cn,
+            "display": design.title_font or tokens.fonts.display,
+            "num": design.latin_font or tokens.fonts.num,
+        }
+    )
+    return tokens.model_copy(update={"colors": colors, "fonts": fonts})
 
 
 def _write_metadata(presentation: Presentation, design: DesignSpec) -> None:

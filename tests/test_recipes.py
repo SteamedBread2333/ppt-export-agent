@@ -1,5 +1,5 @@
-from ppt_expert.models import IntentSlots, RecipeId
-from ppt_expert.recipes import FOUNDATIONS, match_recipe, tokens_for
+from ppt_expert.models import IntentSlots, LayoutScheme, RecipeId
+from ppt_expert.recipes import FOUNDATIONS, match_recipe, recipe_choices, tokens_for
 
 
 def test_recipe_keywords_select_consulting_civic_and_history() -> None:
@@ -19,3 +19,23 @@ def test_foundations_and_role_named_tokens() -> None:
 
 def test_unmatched_request_uses_open_recipe() -> None:
     assert match_recipe("birthday invitation", IntentSlots(topic="party", audience="friends", objective="rsvp")) == RecipeId.OPEN
+
+
+def test_recipe_choices_put_the_match_first_as_recommended() -> None:
+    options = recipe_choices(RecipeId.CONSULTING)
+    assert options[0]["id"] == "consulting"
+    assert options[0]["recommended"] is True
+    assert {item["id"] for item in options} == {item.value for item in RecipeId}
+    assert sum(1 for item in options if item["recommended"]) == 1
+
+
+def test_each_recipe_has_its_own_body_layout() -> None:
+    schemes = {recipe: tokens_for(recipe).layout_scheme for recipe in RecipeId}
+    assert schemes[RecipeId.CONSULTING] == LayoutScheme.RULES
+    assert schemes[RecipeId.WORK_REPORT] == LayoutScheme.STACK
+    assert schemes[RecipeId.CIVIC] == LayoutScheme.BANNER
+    assert schemes[RecipeId.ART_MARKET] == LayoutScheme.BLOCKS
+    assert schemes[RecipeId.EDITORIAL] == LayoutScheme.SPREAD
+    assert schemes[RecipeId.HISTORY] == LayoutScheme.SPINE
+    assert schemes[RecipeId.OPEN] == LayoutScheme.SPREAD
+    assert len(set(schemes.values())) >= 5

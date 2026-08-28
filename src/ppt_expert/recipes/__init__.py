@@ -5,6 +5,7 @@ from ppt_expert.models import (
     DesignTokens,
     FontRoles,
     IntentSlots,
+    LayoutScheme,
     RecipeId,
     StyleBrief,
 )
@@ -48,18 +49,38 @@ _KEYWORDS: dict[RecipeId, tuple[str, ...]] = {
 
 
 def match_recipe(blob: str, intent: IntentSlots | None = None) -> RecipeId:
+    recipe, _reason = match_recipe_with_reason(blob, intent)
+    return recipe
+
+
+def match_recipe_with_reason(blob: str, intent: IntentSlots | None = None) -> tuple[RecipeId, str]:
     text = blob.casefold()
     if intent is not None:
-        text = f"{text} {intent.topic} {intent.objective} {intent.audience}".casefold()
+        text = f"{text} {intent.topic} {intent.audience} {intent.objective}".casefold()
     scored = [
-        (recipe, sum(1 for token in tokens if token.casefold() in text))
+        (recipe, [token for token in tokens if token.casefold() in text])
         for recipe, tokens in _KEYWORDS.items()
     ]
-    scored.sort(key=lambda item: item[1], reverse=True)
-    winner, score = scored[0]
-    if score == 0:
-        return RecipeId.OPEN
-    return winner
+    scored.sort(key=lambda item: len(item[1]), reverse=True)
+    winner, hits = scored[0]
+    if not hits:
+        return RecipeId.OPEN, "No recipe keywords matched; open brief is recommended."
+    preview = ", ".join(hits[:4])
+    return winner, f"Recommended from request cues: {preview}."
+
+
+def recipe_choices(recommended: RecipeId) -> list[dict[str, object]]:
+    ranked = [recommended, *[item for item in RecipeId if item != recommended]]
+    return [
+        {
+            "id": recipe.value,
+            "label": _LABELS[recipe],
+            "proposition": tokens_for(recipe).visual_proposition,
+            "layout_scheme": tokens_for(recipe).layout_scheme.value,
+            "recommended": recipe == recommended,
+        }
+        for recipe in ranked
+    ]
 
 
 def tokens_for(recipe_id: RecipeId) -> DesignTokens:
@@ -82,10 +103,7 @@ def build_style_brief(intent: IntentSlots, recipe_id: RecipeId, mixing_note: str
             f"numerals {tokens.fonts.num}; protect short tokens as single-line."
         ),
         image_behavior=tokens.image_behavior,
-        spatial_rhythm=(
-            "Margin 0.62in; title band then a clear pause before evidence; "
-            "content to 88–92%; implication hugs the folio; header rule and footer y are locked."
-        ),
+        spatial_rhythm=_RHYTHM[recipe_id],
         recipe_id=recipe_id,
         visual_proposition=tokens.visual_proposition,
         mixing_note=mixing_note,
@@ -99,6 +117,7 @@ def _t(
     tension: str,
     fonts: FontRoles | None = None,
     image_behavior: str = "vector_first",
+    layout_scheme: LayoutScheme = LayoutScheme.RULES,
 ) -> DesignTokens:
     return DesignTokens(
         recipe_id=recipe_id,
@@ -107,6 +126,7 @@ def _t(
         visual_proposition=proposition,
         tension=tension,
         image_behavior=image_behavior,
+        layout_scheme=layout_scheme,
     )
 
 
@@ -132,6 +152,7 @@ _RECIPES = {
         },
         "Analytical, compressed, calm. The page reads as a decision file.",
         "Rigorous but readable",
+        layout_scheme=LayoutScheme.RULES,
     ),
     RecipeId.WORK_REPORT: _t(
         RecipeId.WORK_REPORT,
@@ -154,6 +175,7 @@ _RECIPES = {
         },
         "Ordered, restrained, scannable. Status, gap, owner, next step.",
         "Authoritative but operational",
+        layout_scheme=LayoutScheme.STACK,
     ),
     RecipeId.CIVIC: _t(
         RecipeId.CIVIC,
@@ -177,6 +199,7 @@ _RECIPES = {
         "Ceremonial, grounded, contemporary community presence.",
         "Ritual but not a festival poster",
         image_behavior="photography_when_justified",
+        layout_scheme=LayoutScheme.BANNER,
     ),
     RecipeId.ART_MARKET: _t(
         RecipeId.ART_MARKET,
@@ -200,6 +223,7 @@ _RECIPES = {
         "Vivid, curated, poster energy with recoverable order.",
         "Loud but structured",
         image_behavior="campaign_imagery",
+        layout_scheme=LayoutScheme.BLOCKS,
     ),
     RecipeId.EDITORIAL: _t(
         RecipeId.EDITORIAL,
@@ -223,6 +247,7 @@ _RECIPES = {
         "Quiet, cultural, spatial. Image, type, and sequence as exhibition.",
         "Generous but precise",
         image_behavior="large_crop_photography",
+        layout_scheme=LayoutScheme.SPREAD,
     ),
     RecipeId.HISTORY: _t(
         RecipeId.HISTORY,
@@ -247,6 +272,7 @@ _RECIPES = {
         "Historical atmosphere but classroom-clear",
         fonts=FontRoles(cn="PingFang SC", num="Arial", display="Songti SC"),
         image_behavior="maps_artifacts_no_fake_inscriptions",
+        layout_scheme=LayoutScheme.SPINE,
     ),
     RecipeId.OPEN: _t(
         RecipeId.OPEN,
@@ -269,6 +295,7 @@ _RECIPES = {
         },
         "Clear, composed, purpose-built. Invented when no recipe fully fits.",
         "Distinctive but not template-like",
+        layout_scheme=LayoutScheme.SPREAD,
     ),
 }
 
@@ -280,4 +307,34 @@ _ADJECTIVES = {
     RecipeId.EDITORIAL: ["quiet", "cultural", "spatial"],
     RecipeId.HISTORY: ["scholarly", "narrative", "period-aware"],
     RecipeId.OPEN: ["clear", "composed", "purpose-built"],
+}
+
+_LABELS = {
+    RecipeId.CONSULTING: "Consulting — decision file",
+    RecipeId.WORK_REPORT: "Work report — operating status",
+    RecipeId.CIVIC: "Civic — ceremonial community",
+    RecipeId.ART_MARKET: "Art market — poster campaign",
+    RecipeId.EDITORIAL: "Editorial — gallery / magazine",
+    RecipeId.HISTORY: "History — chronology / classroom",
+    RecipeId.OPEN: "Open brief — purpose-built",
+}
+
+_RHYTHM = {
+    RecipeId.CONSULTING: (
+        "Title, pause, hairline columns of assertions; implication hugs the folio."
+    ),
+    RecipeId.WORK_REPORT: (
+        "Stacked operational bands (status, owner, next), not a newspaper cross."
+    ),
+    RecipeId.CIVIC: (
+        "Ceremonial full-width banners and a stamp number; photography when justified."
+    ),
+    RecipeId.ART_MARKET: "Gapped poster blocks, one loud fill; no shared hairline cross.",
+    RecipeId.EDITORIAL: (
+        "Asymmetric columns with a wide gutter; type and crop, not a plus-sign grid."
+    ),
+    RecipeId.HISTORY: "A vertical spine of episodes; chronology, not a 2×2 cross.",
+    RecipeId.OPEN: (
+        "Purpose-built columns with a pause under the title; invent only what the brief needs."
+    ),
 }

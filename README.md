@@ -71,9 +71,11 @@ Delivery confirmation + cleanup
 serialized into a checkpoint; SQLite stores only portable workflow state.
 
 Interrupts: `intent_confirmation` (only if topic/audience/objective are empty),
-`recipe_confirmation` (`use` or `open`), then `delivery_confirmation`
-(`approve` or `revise`). Recipes: `consulting`, `work_report`, `civic`,
-`art_market`, `editorial`, `history`, plus `open` when nothing fits.
+`recipe_confirmation` (all recipes listed; the match is marked recommended),
+then `delivery_confirmation` (`approve` or `revise`). Recipes: `consulting`,
+`work_report`, `civic`, `art_market`, `editorial`, `history`, plus `open` when
+nothing fits. Resume with `{"action": "use"}` for the recommendation, or a
+recipe id to override.
 
 ## Installation
 
@@ -104,8 +106,7 @@ async with create_ppt_agent(runtime, config) as agent:
         project_name="annual-business-review",
     )
 
-    # Confirm the matched recipe and style brief (`use` or `open`).
-    # If topic/audience/objective were empty, resume intent_confirmation first.
+    # Choose a style. `use` accepts the recommended match; a recipe id overrides.
     pending = await agent.resume(pending["thread_id"], {"action": "use"})
     # Approve delivery after montage + XML audit (`approve` or `revise`).
     result = await agent.resume(pending["thread_id"], {"action": "approve"})
@@ -157,10 +158,10 @@ pending = await agent.start(
 )
 ```
 
-The graph pauses for `recipe_confirmation`, not four-style cards or typography.
-A template is applied as the native-edit branch during `build_pptx`. Reference
-images do not replace the recipe gate. Consulting recipes stay vector-first and
-do not use ImageGen in place of charts.
+The graph pauses for `recipe_confirmation` with every recipe as an option and
+the matcher’s guess marked recommended. A template is applied as the native-edit
+branch during `build_pptx`. Reference images do not replace the recipe gate.
+Consulting recipes stay vector-first and do not use ImageGen in place of charts.
 
 ```python
 pending = await agent.resume(pending["thread_id"], {"action": "use"})
@@ -257,7 +258,8 @@ ruff check .
 
 The suite covers recipe matching, token/primitive rendering, short-number
 guards, environment degradation, XML package audit, template reuse, checkpointed
-`recipe_confirmation` / `delivery_confirmation` interrupts, and page-level repair.
+`recipe_confirmation` / `delivery_confirmation` interrupts, per-recipe body
+layout, and page-level repair.
 
 See [`PPT_AGENT_SPEC.md`](PPT_AGENT_SPEC.md) for recipes, page roles, HITL
 payloads, and delivery gates.

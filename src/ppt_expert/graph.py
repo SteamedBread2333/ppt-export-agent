@@ -35,7 +35,13 @@ from ppt_expert.planning import attach_evidence, extract_evidence
 from ppt_expert.pptx import render_presentation
 from ppt_expert.preview import cleanup_render_intermediates
 from ppt_expert.prompts import intent_prompt, outline_prompt, repair_prompt, story_design_prompt
-from ppt_expert.recipes import FOUNDATIONS, build_style_brief, match_recipe, tokens_for
+from ppt_expert.recipes import (
+    FOUNDATIONS,
+    build_style_brief,
+    match_recipe_with_reason,
+    recipe_choices,
+    tokens_for,
+)
 from ppt_expert.repair import merge_repaired_pages
 from ppt_expert.review import review_volume
 from ppt_expert.runtime import GraphContext
@@ -95,7 +101,7 @@ def build_graph(checkpointer):
 
     def match_recipe_node(state: PPTAgentState) -> dict:
         intent = IntentSlots.model_validate(state["intent"])
-        recipe_id = match_recipe(state["request"], intent)
+        recipe_id, reason = match_recipe_with_reason(state["request"], intent)
         mixing = (
             "No canonical recipe fully matched; mixing consulting structure with an open brief."
             if recipe_id == RecipeId.OPEN
@@ -108,6 +114,7 @@ def build_graph(checkpointer):
         )
         return {
             "recipe_id": recipe_id.value,
+            "match_reason": reason,
             "style_brief": brief.model_dump(mode="json"),
             "tokens": tokens.model_dump(mode="json"),
         }
@@ -115,30 +122,41 @@ def build_graph(checkpointer):
     def confirm_recipe(state: PPTAgentState) -> dict:
         brief = StyleBrief.model_validate(state["style_brief"])
         tokens = DesignTokens.model_validate(state["tokens"])
+        recommended = brief.recipe_id
+        options = recipe_choices(recommended)
         response = interrupt(
             {
                 "type": "recipe_confirmation",
-                "message": "Confirm the style recipe and brief before typesetting.",
-                "recipe_id": brief.recipe_id.value,
+                "message": "Choose a style recipe before typesetting.",
+                "recommended": recommended.value,
+                "reason": state.get("match_reason", ""),
+                "recipe_id": recommended.value,
                 "visual_proposition": brief.visual_proposition,
+                "options": options,
                 "brief": brief.model_dump(mode="json"),
                 "palette": tokens.colors.model_dump(),
-                "actions": ["use", "open"],
+                "actions": [item["id"] for item in options] + ["use"],
             }
         )
         payload = response if isinstance(response, dict) else {"action": str(response)}
-        action = str(payload.get("action", "use")).strip().lower()
-        if action in {"use", "ok", "confirm", "a", brief.recipe_id.value}:
+        action = str(payload.get("action") or payload.get("recipe_id") or "use").strip().lower()
+        if action in {"use", "ok", "confirm", "a", "recommended", recommended.value}:
             return {}
-        if action in {"open", "other"}:
-            intent = IntentSlots.model_validate(state["intent"])
-            opened = build_style_brief(intent, RecipeId.OPEN, mixing_note="User requested open brief")
-            return {
-                "recipe_id": RecipeId.OPEN.value,
-                "style_brief": opened.model_dump(mode="json"),
-                "tokens": tokens_for(RecipeId.OPEN).model_dump(mode="json"),
-            }
-        raise ValueError("recipe action must be use or open")
+        try:
+            chosen = RecipeId(action)
+        except ValueError as exc:
+            raise ValueError("recipe action must be a recipe id or use") from exc
+        intent = IntentSlots.model_validate(state["intent"])
+        note = f"User chose {chosen.value} over recommended {recommended.value}"
+        selected = build_style_brief(intent, chosen, mixing_note=note)
+        Path(state["project_dir"], "style-brief.json").write_text(
+            selected.model_dump_json(indent=2), encoding="utf-8"
+        )
+        return {
+            "recipe_id": chosen.value,
+            "style_brief": selected.model_dump(mode="json"),
+            "tokens": tokens_for(chosen).model_dump(mode="json"),
+        }
 
     def survey_env(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
         report = survey_environment(enable_visual=runtime.context.config.enable_libreoffice_preview)
@@ -226,11 +244,13 @@ def build_graph(checkpointer):
     def render_overview(state: PPTAgentState) -> dict:
         env = EnvironmentReport.model_validate(state.get("environment") or {})
         pages = [StoryPage.model_validate(item) for item in state["story"]]
+        tokens = DesignTokens.model_validate(state.get("tokens") or {})
         review = review_volume(
             state["pptx_path"],
             pages,
             state["project_dir"],
             visual_review=env.visual_review,
+            layout_scheme=tokens.layout_scheme,
         )
         (Path(state["project_dir"]) / "review.json").write_text(
             review.model_dump_json(indent=2), encoding="utf-8"

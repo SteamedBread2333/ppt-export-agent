@@ -8,6 +8,7 @@ _COMPOSE = [
     Path("src/ppt_expert/pptx/slides.py"),
     Path("src/ppt_expert/pptx/primitives.py"),
     Path("src/ppt_expert/pptx/renderer.py"),
+    Path("src/ppt_expert/pptx/layout.py"),
 ]
 _ALLOWED = {"#FFFFFF", "#000000"}
 

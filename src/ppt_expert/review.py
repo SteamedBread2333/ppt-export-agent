@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pptx import Presentation
 
-from ppt_expert.models import PageRole, QualityIssue, StoryPage, VolumeReview
+from ppt_expert.models import LayoutScheme, PageRole, QualityIssue, StoryPage, VolumeReview
 from ppt_expert.preview import render_montage
 
 
@@ -15,6 +15,7 @@ def review_volume(
     *,
     dpi: int = 70,
     visual_review: str = "degraded",
+    layout_scheme: LayoutScheme = LayoutScheme.RULES,
 ) -> VolumeReview:
     presentation = Presentation(str(pptx_path))
     issues: list[QualityIssue] = []
@@ -86,7 +87,7 @@ def review_volume(
         montage, pdf = render_montage(pptx_path, Path(project_dir) / "render", dpi=dpi)
     issues.extend(inspect_representatives(pptx_path, pages, representative))
     issues.extend(_numeric_conflicts(pages))
-    issues.extend(_aesthetic_geometry(presentation, pages))
+    issues.extend(_aesthetic_geometry(presentation, pages, layout_scheme))
     return VolumeReview(
         rhythm_ok=rhythm_ok,
         no_adjacent_repeat=not adjacent_repeat,
@@ -228,8 +229,10 @@ def _numeric_conflicts(pages: list[StoryPage]) -> list[QualityIssue]:
     return issues
 
 
-def _aesthetic_geometry(presentation, pages: list[StoryPage]) -> list[QualityIssue]:
-    """Taste the montage can actually enforce: no card soup, title must breathe."""
+def _aesthetic_geometry(
+    presentation, pages: list[StoryPage], layout_scheme: LayoutScheme
+) -> list[QualityIssue]:
+    """Taste the montage can enforce without a vision model."""
     issues: list[QualityIssue] = []
     slide_w = presentation.slide_width
     slide_h = presentation.slide_height
@@ -238,7 +241,10 @@ def _aesthetic_geometry(presentation, pages: list[StoryPage]) -> list[QualityIss
             break
         slide = presentation.slides[index]
         role = page.resolved_role()
-        if role not in {PageRole.COVER, PageRole.CLOSE, PageRole.SCENARIO}:
+        if (
+            layout_scheme in {LayoutScheme.RULES, LayoutScheme.SPREAD}
+            and role not in {PageRole.COVER, PageRole.CLOSE, PageRole.SCENARIO}
+        ):
             cards = _filled_modules(slide, slide_w, slide_h)
             if cards >= 2:
                 issues.append(
