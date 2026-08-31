@@ -79,10 +79,27 @@ recipe id to override.
 
 ## Installation
 
+From a fresh clone, one command installs Python 3.11+, the package, LibreOffice,
+and poppler (`pdftoppm`). Montage review will not run without those two tools.
+
 ```bash
-python -m venv .venv
+./scripts/bootstrap.sh
+source .venv/bin/activate
+ppt-expert doctor
+```
+
+macOS needs [Homebrew](https://brew.sh). Debian/Ubuntu/Fedora use `apt` or `dnf`
+(sudo). The script creates `.venv`, runs `pip install -e ".[dev]"`, then
+`ppt-expert setup`. Windows: install Python 3.11+, LibreOffice, and Poppler,
+then create the venv and run `pip install -e ".[dev]"` plus `ppt-expert doctor`.
+
+If the virtualenv already exists:
+
+```bash
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+ppt-expert setup
 ```
 
 ## Quick Start
@@ -136,7 +153,7 @@ async def generate_image_with_host(request, output_path):
 runtime = HostRuntime(
     structured_generate=generate_with_host,
     image_generate=generate_image_with_host,
-    critique_images=host_vision_tool,  # optional contact-sheet critic
+    critique_images=host_vision_tool,  # required contact-sheet critic
 )
 ```
 
@@ -185,11 +202,21 @@ and normalizes every generated asset to a real PNG before composition.
 
 ## Command Line
 
+Confirm the host can render montages:
+
+```bash
+ppt-expert doctor
+ppt-expert setup   # installs LibreOffice / poppler if they are missing
+```
+
 Run the fully offline demo:
 
 ```bash
 ppt-expert demo --recipe use --delivery approve
 ```
+
+LibreOffice (`soffice`) and `pdftoppm` (poppler) are required. The demo renders
+`render/montage.png` and runs contact-sheet critique before delivery.
 
 Run the demo with a template (native-edit branch):
 
@@ -238,9 +265,8 @@ outputs/<project-thread>/
 └── DELIVERY.md
 ```
 
-LibreOffice + `pdftoppm` enable a 70dpi montage and 130dpi representative pages.
-If they are missing, the run still completes and `environment.json` records
-`visual_review: degraded`.
+LibreOffice and `pdftoppm` are required. Every run writes `render/montage.png`
+and a vision critic must review it. Missing tools abort the graph.
 
 ## Host Capability Contract
 
@@ -253,6 +279,9 @@ The text capability must return structured output:
 The image capability receives an `ImageRequest` and target path. It may return
 bytes, return an existing path, or write directly to the target.
 
+The montage critic is required: `critique_images(prompt, image_paths, VisionCritique)`
+or a vision-capable `model` that accepts the contact sheet.
+
 ## Quality Gates
 
 ```bash
@@ -261,7 +290,7 @@ ruff check .
 ```
 
 The suite covers recipe matching, token/primitive rendering, short-number
-guards, environment degradation, XML package audit, template reuse, checkpointed
+guards, required montage review, XML package audit, template reuse, checkpointed
 `recipe_confirmation` / `delivery_confirmation` interrupts, per-recipe body
 layout, and page-level repair.
 

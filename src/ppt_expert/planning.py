@@ -3,8 +3,6 @@ from __future__ import annotations
 import re
 
 from ppt_expert.models import (
-    DeckArchetype,
-    DeckBrief,
     EvidenceBundle,
     EvidenceItem,
     OutlinePlan,
@@ -14,23 +12,6 @@ from ppt_expert.models import (
 )
 
 _NUMBER = re.compile(r"(?<![\w./])([-+]?\d+(?:\.\d+)?)(%|亿|万|bp|ppt)?")
-_STRATEGY = ("strategy", "outlook", "allocation", "scenario", "策略", "展望", "配置")
-_PRODUCT = ("product", "launch", "roadmap", "产品", "发布")
-_NARRATIVE = ("story", "tribute", "纪念", "故事")
-
-
-def build_brief(outline: OutlinePlan, request: str) -> DeckBrief:
-    blob = f"{outline.title} {outline.purpose} {request}".casefold()
-    return DeckBrief(
-        objective=outline.purpose or outline.title,
-        audience=outline.audience,
-        decision_context=request.strip().splitlines()[0][:240] if request.strip() else outline.title,
-        duration_minutes=max(12, len(outline.pages) * 2),
-        language=_language(outline.title + outline.purpose),
-        slide_count=len(outline.pages),
-        primary_archetype=_archetype(blob),
-        density="high" if len(outline.pages) >= 8 else "medium",
-    )
 
 
 def extract_evidence(outline: OutlinePlan) -> EvidenceBundle:
@@ -91,17 +72,3 @@ def _visual_form(page: StoryPage) -> VisualForm:
     if page.heatmap:
         return VisualForm.HEATMAP
     return mapping.get(family, VisualForm.NARRATIVE)
-
-
-def _archetype(blob: str) -> DeckArchetype:
-    if any(token in blob for token in _STRATEGY):
-        return DeckArchetype.STRATEGY
-    if any(token in blob for token in _PRODUCT):
-        return DeckArchetype.PRODUCT
-    if any(token in blob for token in _NARRATIVE):
-        return DeckArchetype.NARRATIVE
-    return DeckArchetype.RESEARCH
-
-
-def _language(text: str) -> str:
-    return "zh" if any("\u4e00" <= character <= "\u9fff" for character in text) else "en"

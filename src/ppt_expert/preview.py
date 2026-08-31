@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
-import shutil
 import subprocess
 from pathlib import Path
 
 from PIL import Image
+
+from ppt_expert.tools import require_preview_tools
 
 
 def render_previews(
@@ -14,9 +15,7 @@ def render_previews(
     *,
     dpi: int = 110,
 ) -> list[str]:
-    executable = shutil.which("libreoffice") or shutil.which("soffice")
-    if executable is None:
-        return []
+    executable, _converter = require_preview_tools()
     source = Path(pptx_path).expanduser().resolve()
     destination = Path(output_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -37,21 +36,39 @@ def render_previews(
     )
     pdf = destination / f"{source.stem}.pdf"
     if result.returncode != 0 or not pdf.exists():
-        return []
-    previews = [str(pdf.resolve())]
-    converter = shutil.which("pdftoppm")
-    if converter:
-        prefix = destination / "pg"
-        image_result = subprocess.run(
-            [converter, "-png", "-r", str(dpi), str(pdf), str(prefix)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if image_result.returncode == 0:
-            previews.extend(str(path.resolve()) for path in sorted(destination.glob("pg-*.png")))
-    return previews
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"LibreOffice failed to convert {source.name} to PDF: {detail}")
+    pngs = rasterize_pdf(pdf, destination, dpi=dpi, prefix="pg")
+    return [str(pdf.resolve()), *pngs]
+
+
+def rasterize_pdf(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    *,
+    dpi: int,
+    prefix: str,
+    first_page: int | None = None,
+    last_page: int | None = None,
+) -> list[str]:
+    _soffice, converter = require_preview_tools()
+    pdf = Path(pdf_path).expanduser().resolve()
+    destination = Path(output_dir).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    if not pdf.exists():
+        raise RuntimeError(f"PDF does not exist: {pdf}")
+    command = [converter, "-png", "-r", str(dpi)]
+    if first_page is not None:
+        command.extend(["-f", str(first_page)])
+    if last_page is not None:
+        command.extend(["-l", str(last_page)])
+    command.extend([str(pdf), str(destination / prefix)])
+    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
+    pngs = _pngs(destination, prefix)
+    if result.returncode != 0 or not pngs:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"pdftoppm failed to rasterize {pdf.name}: {detail}")
+    return pngs
 
 
 def render_montage(
@@ -61,10 +78,8 @@ def render_montage(
     dpi: int = 70,
 ) -> tuple[str, str]:
     paths = render_previews(pptx_path, output_dir, dpi=dpi)
-    pdf = next((path for path in paths if path.endswith(".pdf")), "")
+    pdf = next(path for path in paths if path.endswith(".pdf"))
     images = [path for path in paths if path.endswith(".png")]
-    if not images:
-        return "", pdf
     tiles = [Image.open(path).convert("RGB") for path in images]
     columns = min(3, len(tiles))
     rows = max(1, math.ceil(len(tiles) / columns))
@@ -85,43 +100,22 @@ def render_representative_pages(
     *,
     dpi: int = 130,
 ) -> list[str]:
-    converter = shutil.which("pdftoppm")
-    if converter is None or not page_numbers:
-        return []
+    if not page_numbers:
+        raise RuntimeError("Representative page numbers are required for montage review")
     destination = Path(output_dir).expanduser().resolve()
-    destination.mkdir(parents=True, exist_ok=True)
     written: list[str] = []
     for number in page_numbers:
-        prefix = destination / f"hi-pg{number}"
-        result = subprocess.run(
-            [
-                converter,
-                "-png",
-                "-r",
-                str(dpi),
-                "-f",
-                str(number),
-                "-l",
-                str(number),
-                str(pdf_path),
-                str(prefix),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
+        written.extend(
+            rasterize_pdf(
+                pdf_path,
+                destination,
+                dpi=dpi,
+                prefix=f"hi-pg{number}",
+                first_page=number,
+                last_page=number,
+            )
         )
-        if result.returncode != 0:
-            continue
-        written.extend(str(path.resolve()) for path in sorted(destination.glob(f"hi-pg{number}*.png")))
     return written
-
-
-def render_pdf_preview(pptx_path: str | Path, output_dir: str | Path) -> str | None:
-    return next(
-        (path for path in render_previews(pptx_path, output_dir) if path.endswith(".pdf")),
-        None,
-    )
 
 
 def cleanup_render_intermediates(output_dir: str | Path) -> None:
@@ -129,3 +123,11 @@ def cleanup_render_intermediates(output_dir: str | Path) -> None:
     for pattern in ("pg-*.png", "hi-pg*.png"):
         for path in folder.glob(pattern):
             path.unlink(missing_ok=True)
+
+
+def _pngs(destination: Path, prefix: str) -> list[str]:
+    exact = destination / f"{prefix}.png"
+    matches = sorted(destination.glob(f"{prefix}-*.png"))
+    if exact.exists():
+        matches = [exact, *[path for path in matches if path != exact]]
+    return [str(path.resolve()) for path in matches]

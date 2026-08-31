@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import inspect
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from ppt_expert.models import QualityIssue, QualityReport, VisionCritique
@@ -23,19 +25,25 @@ Reject these as ugly, not as style:
 """
 
 
+def require_vision_host(host: HostRuntime) -> None:
+    if host.critique_images is not None:
+        return
+    if host.model is not None and hasattr(host.model, "with_structured_output"):
+        return
+    raise RuntimeError(
+        "Montage review requires HostRuntime.critique_images or a vision-capable model"
+    )
+
+
 async def critique_montage(host: HostRuntime, image_paths: Sequence[str]) -> list[QualityIssue]:
-    if host.critique_images is None or not image_paths:
-        return []
-    try:
-        result = host.critique_images(VISION_PROMPT, list(image_paths), VisionCritique)
-        result = await result if inspect.isawaitable(result) else result
-        # Montage taste cannot be repaired by rewriting copy; surface it, do not loop.
-        return [
-            issue.model_copy(update={"severity": "warning"})
-            for issue in _coerce_critique(result).issues
-        ]
-    except Exception:  # noqa: BLE001
-        return []
+    require_vision_host(host)
+    if not image_paths:
+        raise RuntimeError("Montage critique requires render/montage.png")
+    missing = [path for path in image_paths if not Path(path).is_file()]
+    if missing:
+        raise RuntimeError(f"Montage PNG missing: {', '.join(missing)}")
+    result = await _invoke_critique(host, image_paths)
+    return list(_coerce_critique(result).issues)
 
 
 async def apply_vision_review(
@@ -43,28 +51,42 @@ async def apply_vision_review(
     host: HostRuntime,
     image_paths: Sequence[str],
 ) -> QualityReport:
-    if host.critique_images is None or not image_paths:
-        return report
-    try:
+    require_vision_host(host)
+    if not image_paths:
+        raise RuntimeError("Vision review requires a contact-sheet PNG")
+    result = await _invoke_critique(host, image_paths)
+    return _merge_vision(report, _coerce_critique(result))
+
+
+async def _invoke_critique(host: HostRuntime, image_paths: Sequence[str]) -> Any:
+    if host.critique_images is not None:
         result = host.critique_images(VISION_PROMPT, list(image_paths), VisionCritique)
-        result = await result if inspect.isawaitable(result) else result
-        critique = _coerce_critique(result)
-    except Exception:  # noqa: BLE001 - host vision is optional and must not abort delivery
-        return report.model_copy(
-            update={
-                "warnings": [
-                    *report.warnings,
-                    QualityIssue(
-                        code="vision_review_failed",
-                        message="Host image critique raised an error; structural scores stand",
-                        cause="critique_images did not return a usable VisionCritique",
-                        repair_scope="slide",
-                        acceptance="Host critique_images returns a scored visual review",
-                    ),
-                ]
+        return await result if inspect.isawaitable(result) else result
+    return await _critique_with_model(host, image_paths)
+
+
+async def _critique_with_model(host: HostRuntime, image_paths: Sequence[str]) -> Any:
+    model = host.model
+    from langchain_core.messages import HumanMessage
+
+    parts: list[dict[str, Any]] = [{"type": "text", "text": VISION_PROMPT}]
+    for path in image_paths:
+        raw = Path(path).read_bytes()
+        suffix = Path(path).suffix.lower()
+        mime = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+        encoded = base64.b64encode(raw).decode("ascii")
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{encoded}"},
             }
         )
-    return _merge_vision(report, critique)
+    runnable = model.with_structured_output(VisionCritique)
+    message = HumanMessage(content=parts)
+    result = (
+        runnable.ainvoke([message]) if hasattr(runnable, "ainvoke") else runnable.invoke([message])
+    )
+    return await result if inspect.isawaitable(result) else result
 
 
 def _coerce_critique(result: Any) -> VisionCritique:
@@ -79,11 +101,7 @@ def _coerce_critique(result: Any) -> VisionCritique:
 
 
 def _merge_vision(report: QualityReport, critique: VisionCritique) -> QualityReport:
-    warnings = [
-        item
-        for item in report.warnings
-        if item.code != "vision_review_unavailable"
-    ]
+    warnings = [item for item in report.warnings if item.code != "vision_review_unavailable"]
     blocking = list(report.blocking_issues)
     for issue in critique.issues:
         if issue.severity == "error":

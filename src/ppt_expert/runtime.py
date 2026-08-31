@@ -25,6 +25,8 @@ class HostRuntime:
     `model` is the exact model object already owned by the host. No provider is
     constructed here. Hosts with a non-LangChain Agent can supply
     `structured_generate` to call that Agent in its native way.
+
+    Montage review requires `critique_images` or a vision-capable `model`.
     """
 
     model: Any | None = None

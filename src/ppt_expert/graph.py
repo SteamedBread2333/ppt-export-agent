@@ -159,7 +159,10 @@ def build_graph(checkpointer):
         }
 
     def survey_env(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
-        report = survey_environment(enable_visual=runtime.context.config.enable_libreoffice_preview)
+        from ppt_expert.vision import require_vision_host
+
+        require_vision_host(runtime.context.host)
+        report = survey_environment()
         write_environment(report, state["project_dir"])
         (Path(state["project_dir"]) / "render").mkdir(parents=True, exist_ok=True)
         return {"environment": report.model_dump(mode="json")}
@@ -250,14 +253,12 @@ def build_graph(checkpointer):
         return {"repair_attempts": state.get("repair_attempts", 0) + 1}
 
     def render_overview(state: PPTAgentState) -> dict:
-        env = EnvironmentReport.model_validate(state.get("environment") or {})
         pages = [StoryPage.model_validate(item) for item in state["story"]]
         tokens = DesignTokens.model_validate(state.get("tokens") or {})
         review = review_volume(
             state["pptx_path"],
             pages,
             state["project_dir"],
-            visual_review=env.visual_review,
             layout_scheme=tokens.layout_scheme,
             native_edit=bool(state.get("template_path")),
         )
@@ -267,24 +268,20 @@ def build_graph(checkpointer):
         return {"review": review.model_dump(mode="json"), "montage_path": review.montage_path}
 
     async def inspect_reps(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
-        env = EnvironmentReport.model_validate(state.get("environment") or {})
         review = VolumeReview.model_validate(state.get("review") or {})
         project = Path(state["project_dir"])
-        if env.visual_review == "full" and review.pdf_path and review.representative_pages:
-            from ppt_expert.preview import render_representative_pages
-
-            render_representative_pages(
-                review.pdf_path,
-                project / "render",
-                review.representative_pages,
-                dpi=130,
-            )
+        if not review.montage_path or not review.pdf_path:
+            raise RuntimeError("Montage review did not produce montage.png and PDF")
+        from ppt_expert.preview import render_representative_pages
         from ppt_expert.vision import critique_montage
 
-        extra = await critique_montage(
-            runtime.context.host,
-            [path for path in [review.montage_path] if path],
+        render_representative_pages(
+            review.pdf_path,
+            project / "render",
+            review.representative_pages,
+            dpi=130,
         )
+        extra = await critique_montage(runtime.context.host, [review.montage_path])
         if extra:
             review.issues.extend(extra)
             (project / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
@@ -359,6 +356,7 @@ def build_graph(checkpointer):
     def confirm_delivery(state: PPTAgentState) -> dict:
         validation = ValidationReport.model_validate(state["validation"])
         review = VolumeReview.model_validate(state.get("review") or {})
+        env = EnvironmentReport.model_validate(state.get("environment") or {})
         choice = interrupt(
             {
                 "type": "delivery_confirmation",
@@ -366,6 +364,7 @@ def build_graph(checkpointer):
                 "validation": validation.model_dump(mode="json"),
                 "review": review.model_dump(mode="json"),
                 "montage_path": state.get("montage_path"),
+                "visual_review": env.visual_review,
                 "actions": ["approve", "revise"],
             }
         )
@@ -393,15 +392,14 @@ def build_graph(checkpointer):
         cleanup_render_intermediates(project / "render")
         delivery = project / "DELIVERY.md"
         brief = StyleBrief.model_validate(state["style_brief"])
-        env = EnvironmentReport.model_validate(state.get("environment") or {})
         lines = [
             "# DELIVERY",
             "",
             f"- Recipe: {brief.recipe_id.value}",
             f"- Proposition: {brief.visual_proposition}",
             f"- Tension: {brief.tension}",
-            f"- Visual review: {env.visual_review}",
-            f"- Montage: {state.get('montage_path') or 'degraded (no soffice/pdftoppm)'}",
+            "- Visual review: full",
+            f"- Montage: {state['montage_path']}",
             "",
             "## Engineering",
             "- Editable native pptx via python-pptx tokens, primitives, and page roles.",

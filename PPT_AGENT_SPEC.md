@@ -196,15 +196,10 @@ This is the last preparation before typesetting.
 
 ### Phase 2 — Environment
 
-`survey_environment` probes `soffice` / `libreoffice`, `pdftoppm`, ImageMagick,
-and PIL. Missing Node/pptxgenjs is not an error.
+`survey_environment` requires `soffice` / `libreoffice`, `pdftoppm` (poppler),
+and PIL. Missing tools abort the run. There is no degraded visual path.
 
-Results go to `environment.json`:
-
-- `visual_review: full` when LibreOffice preview is enabled and soffice +
-  pdftoppm + PIL are present
-- `visual_review: degraded` otherwise — the graph still completes; montage and
-  representative PNGs are skipped and delivery notes the degradation
+Results go to `environment.json` with `visual_review: full`.
 
 Project directory (physical form):
 
@@ -252,16 +247,23 @@ Writes `guards.json`.
 
 ### Phase 5 — Visual review
 
-When `visual_review` is `full`:
+Every run renders the contact sheet. Missing LibreOffice or pdftoppm is a
+hard error.
 
 1. `soffice` → PDF → `pdftoppm -r 70` → PIL montage `render/montage.png`
 2. Four representative pages at ~130dpi: cover, densest page, special-element
    page, close (or overview anomaly)
 
+`HostRuntime.critique_images` (or a vision-capable `host.model`) **must**
+review that montage. Findings keep the critic's severity. Errors route to
+`repair_pages`, then rebuild (compose, or native-edit into template boxes).
+
 Deterministic volume checks (geometry / roles), then four questions on
 representatives:
 
-1. Is the title an assertion or a topic?
+1. Is the title an assertion or a topic? (`topic_title` is an error: rewrite
+   copy, then rebuild. On a template, native-edit writes the new title into the
+   existing box.)
 2. Overflow / overlap?
 3. Column alignment?
 4. Does the implication bar hug the folio safety band?
@@ -269,9 +271,11 @@ representatives:
 Also: dark bookends, adjacent silhouette repeat, empty lower third, footer
 lock, conflicting KPI labels.
 
-Repair **only affected pages** (`merge_repaired_pages`), then rebuild.
+Native-edit skips recipe-token geometry (`card_soup`, cramped header, empty
+bottom, footer lock) so brand art is not punished. Montage render and vision
+critique still run on template decks.
 
-If tools are missing, skip bitmaps and keep structural review.
+Repair **only affected pages** (`merge_repaired_pages`), then rebuild.
 
 ### Phase 6 — XML audit, delivery, cleanup
 
@@ -437,7 +441,8 @@ Optional `template_path` and `reference_images` on `start()`:
   compose recipe pages onto a blank 16:9 canvas.
 - XML audit skips recipe palette / font / chart-count checks for this branch;
   volume review skips token geometry (`card_soup`, cramped header, empty bottom,
-  footer lock). Overflow is still checked against the template canvas.
+  footer lock). Overflow and `topic_title` still apply; repaired copy is written
+  into the existing template boxes.
 - references: do not skip recipe confirmation; consulting stays vector-first
 
 This is the “native-edit an existing deck” branch, not a fourth HITL style
@@ -452,7 +457,7 @@ HostRuntime(
     model=...,                      # LangChain, with_structured_output
     structured_generate=...,        # or a callable (prompt, schema) -> model
     image_generate=...,             # optional
-    critique_images=...,            # optional; unused as a delivery gate
+    critique_images=...,            # required contact-sheet critic (or vision model)
 )
 ```
 
@@ -474,6 +479,9 @@ async with create_ppt_agent(runtime, config) as agent:
 CLI:
 
 ```bash
+./scripts/bootstrap.sh
+ppt-expert doctor
+ppt-expert setup
 ppt-expert demo --recipe use --delivery approve
 ppt-expert benchmark
 ppt-expert validate <project>
@@ -545,7 +553,7 @@ A nine-slide consulting deck must include:
 - header title `y` and footer `y` lock across a volume
 - four-theme expansion is hierarchical, not tall empty pillars
 - `36.8%` is single-line (`wrap=False`)
-- missing soffice: flow completes, `visual_review: degraded`
+- missing soffice or pdftoppm: the graph fails; montage review is mandatory
 - XML notes present, no `NaN` / `undefined` / `[object`
 - demo e2e interrupts are `recipe_confirmation` (options + recommended) then
   `delivery_confirmation` (`intent_confirmation` only when slots are empty)
@@ -582,7 +590,7 @@ The production system is complete when:
 - a recipe (or open brief) is confirmed before typesetting
 - compose is role-named and token-driven
 - short numeric tokens cannot stack vertically in narrow boxes
-- visual review degrades cleanly without soffice
+- LibreOffice and pdftoppm are required; montage review is mandatory
 - XML audit and speaker notes are delivery gates
 - repair changes only failing pages
 - consulting evidence is native and editable

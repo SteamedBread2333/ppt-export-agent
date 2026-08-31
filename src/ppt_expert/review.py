@@ -14,7 +14,6 @@ def review_volume(
     project_dir: str | Path,
     *,
     dpi: int = 70,
-    visual_review: str = "degraded",
     layout_scheme: LayoutScheme = LayoutScheme.RULES,
     native_edit: bool = False,
 ) -> VolumeReview:
@@ -83,10 +82,7 @@ def review_volume(
                 )
             )
     representative = _representatives(pages)
-    montage = ""
-    pdf = ""
-    if visual_review == "full":
-        montage, pdf = render_montage(pptx_path, Path(project_dir) / "render", dpi=dpi)
+    montage, pdf = render_montage(pptx_path, Path(project_dir) / "render", dpi=dpi)
     issues.extend(
         inspect_representatives(pptx_path, pages, representative, native_edit=native_edit)
     )
@@ -138,6 +134,7 @@ def inspect_representatives(
                     code="topic_title",
                     message="Representative title reads as a topic, not an assertion",
                     page=number,
+                    severity="error",
                     cause="The title names a subject instead of a judgment",
                     repair_scope="slide",
                     acceptance="Title is a complete assertion",

@@ -72,7 +72,9 @@ async def test_vision_review_merges_conservative_score(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_montage_critique_is_advisory_not_a_repair_loop() -> None:
+async def test_montage_critique_keeps_error_severity(tmp_path) -> None:
+    sheet = tmp_path / "montage.png"
+    sheet.write_bytes(b"png")
     host = HostRuntime(
         critique_images=lambda prompt, paths, schema: VisionCritique(
             score=40,
@@ -89,7 +91,45 @@ async def test_montage_critique_is_advisory_not_a_repair_loop() -> None:
             ],
         )
     )
-    issues = await critique_montage(host, ["montage.png"])
+    issues = await critique_montage(host, [str(sheet)])
     assert issues
     assert issues[0].code == "card_soup"
+    assert issues[0].severity == "error"
+
+
+class _VisionRunner:
+    def invoke(self, _messages):
+        return VisionCritique(
+            score=80,
+            issues=[
+                QualityIssue(
+                    code="topic_title",
+                    message="The title names a subject",
+                    page=1,
+                    severity="warning",
+                )
+            ],
+        )
+
+
+class _VisionModel:
+    def with_structured_output(self, _schema):
+        return _VisionRunner()
+
+
+@pytest.mark.asyncio
+async def test_model_critiques_montage_when_critique_images_is_missing(tmp_path) -> None:
+    sheet = tmp_path / "montage.png"
+    sheet.write_bytes(b"png")
+    issues = await critique_montage(HostRuntime(model=_VisionModel()), [str(sheet)])
+    assert issues
+    assert issues[0].code == "topic_title"
     assert issues[0].severity == "warning"
+
+
+@pytest.mark.asyncio
+async def test_missing_vision_host_fails(tmp_path) -> None:
+    sheet = tmp_path / "montage.png"
+    sheet.write_bytes(b"png")
+    with pytest.raises(RuntimeError, match="critique_images"):
+        await critique_montage(HostRuntime(), [str(sheet)])

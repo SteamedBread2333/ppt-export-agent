@@ -1,28 +1,22 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from ppt_expert.models import EnvironmentReport
+from ppt_expert.tools import require_preview_tools
 
 
-def survey_environment(*, enable_visual: bool = True) -> EnvironmentReport:
-    soffice = shutil.which("soffice") is not None or shutil.which("libreoffice") is not None
-    pdftoppm = shutil.which("pdftoppm") is not None
-    magick = shutil.which("magick") is not None or shutil.which("convert") is not None
+def survey_environment() -> EnvironmentReport:
+    require_preview_tools()
     try:
         from PIL import Image  # noqa: F401
-
-        pil = True
-    except ImportError:
-        pil = False
-    visual = "full" if enable_visual and soffice and pdftoppm and pil else "degraded"
+    except ImportError as exc:
+        raise RuntimeError("Montage review requires Pillow") from exc
     return EnvironmentReport(
-        soffice=soffice,
-        pdftoppm=pdftoppm,
-        magick=magick,
-        pil=pil,
-        visual_review=visual,
+        soffice=True,
+        pdftoppm=True,
+        pil=True,
+        visual_review="full",
     )
 
 

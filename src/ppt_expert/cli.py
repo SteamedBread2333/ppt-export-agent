@@ -12,13 +12,44 @@ from watchdog.observers import Observer
 
 from ppt_expert.agent import create_ppt_agent
 from ppt_expert.config import AgentConfig
-from ppt_expert.demo_runtime import fake_structured_generate
+from ppt_expert.demo_runtime import fake_critique_images, fake_structured_generate
 from ppt_expert.models import DesignSpec, OutlinePlan, StoryPage
 from ppt_expert.pptx import render_presentation
 from ppt_expert.runtime import HostRuntime
 from ppt_expert.validation import validate_presentation, write_validation_report
 
 app = typer.Typer(help="Host-model-powered LangGraph PPT Expert Agent")
+
+
+@app.command()
+def setup() -> None:
+    """Install LibreOffice and poppler when they are missing, then verify."""
+    from ppt_expert.setup_tools import doctor_report, ensure_preview_tools
+
+    try:
+        ensure_preview_tools()
+        _print_doctor(doctor_report())
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def doctor() -> None:
+    """Verify Python, Pillow, LibreOffice, and pdftoppm for montage review."""
+    from ppt_expert.setup_tools import doctor_report
+
+    try:
+        _print_doctor(doctor_report())
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _print_doctor(report: dict[str, str]) -> None:
+    for key, value in report.items():
+        typer.echo(f"{key}: {value}")
+    typer.echo("OK")
 
 
 @app.command()
@@ -39,11 +70,14 @@ def demo(
         typer.Option("--reference-image", help="Repeatable style reference image"),
     ] = None,
 ) -> None:
-    """Run a complete offline demo with the deterministic fake host."""
+    """Run a complete demo with montage review (LibreOffice + pdftoppm required)."""
 
     async def run() -> None:
-        runtime = HostRuntime(structured_generate=fake_structured_generate)
-        config = AgentConfig(output_root=output, enable_libreoffice_preview=False)
+        runtime = HostRuntime(
+            structured_generate=fake_structured_generate,
+            critique_images=fake_critique_images,
+        )
+        config = AgentConfig(output_root=output)
         async with create_ppt_agent(runtime, config) as agent:
             result = await agent.start(
                 "Create a presentation that demonstrates the PPT Expert workflow.",
@@ -257,8 +291,6 @@ def _is_build_input(project: Path, changed: Path) -> bool:
         "story.json",
         "design.json",
         "template.json",
-        "references.json",
-        "reference-selection.json",
     } or (
         changed.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
         and (project / "assets") in changed.parents

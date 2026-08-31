@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from ppt_expert.models import OutlinePage, OutlinePlan, StyleOption
+from ppt_expert.models import DesignSpec, OutlinePage, OutlinePlan
 
 
 def test_outline_requires_contiguous_pages() -> None:
@@ -15,15 +15,16 @@ def test_outline_requires_contiguous_pages() -> None:
         )
 
 
-def test_style_normalizes_hex_colors() -> None:
-    style = StyleOption(
-        key="A",
-        name="test",
-        mood="test",
-        primary="#abcdef",
-        secondary="#123456",
-        background="#ffffff",
-        text="#111111",
-        accent="#fedcba",
+def test_design_normalizes_optional_hex_colors() -> None:
+    design = DesignSpec(
+        style_name="Deep Blue",
+        mood="Measured",
+        primary="#16324F",
+        secondary="#2E6F95",
+        background="#F4F8FB",
+        text="#102A43",
+        accent="#F29E4C",
+        illustration_style="Flat",
+        muted="#abcdef",
     )
-    assert style.primary == "#ABCDEF"
+    assert design.muted == "#ABCDEF"

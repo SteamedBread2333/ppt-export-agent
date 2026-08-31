@@ -221,3 +221,16 @@ def test_native_edit_assigns_chart_pages_to_chart_slides(tmp_path: Path) -> None
     assert body_charts
     categories = [str(category) for category in body_charts[0].plots[0].categories]
     assert categories == ["Q1", "Q2"]
+
+
+def test_topic_title_blocks_so_copy_can_be_written_into_template_boxes(tmp_path: Path) -> None:
+    template = tmp_path / "topic.pptx"
+    source = Presentation()
+    source.slides.add_slide(source.slide_layouts[6])
+    source.save(template)
+    pages = [_page(1, "市场", ["先下判断"], role=PageRole.COVER)]
+    path = tmp_path / "topic.pptx"
+    render_presentation(pages, _design(), {}, path, AgentConfig(), template_path=template)
+    review = review_volume(path, pages, tmp_path, native_edit=True)
+    issue = next(item for item in review.issues if item.code == "topic_title")
+    assert issue.severity == "error"

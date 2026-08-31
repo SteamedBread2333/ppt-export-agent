@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from ppt_expert.models import (
@@ -16,6 +17,7 @@ from ppt_expert.models import (
     SlideFamily,
     StoryDesignBundle,
     StoryPage,
+    VisionCritique,
 )
 
 
@@ -148,3 +150,12 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
             ),
         )
     raise ValueError(f"Unsupported demo schema: {schema.__name__}")
+
+
+def fake_critique_images(prompt: str, paths: list[str], schema: type) -> VisionCritique:
+    """Deterministic contact-sheet critic used by tests and `ppt-expert demo`."""
+    del prompt, schema
+    missing = [path for path in paths if not Path(path).is_file()]
+    if missing:
+        raise FileNotFoundError(f"Montage PNG missing: {', '.join(missing)}")
+    return VisionCritique(score=88, issues=[], notes="contact sheet reviewed")

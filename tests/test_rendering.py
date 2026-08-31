@@ -432,7 +432,7 @@ def test_overview_and_context_fail_card_soup_review_if_tiled(tmp_path: Path) -> 
     ]
     path = tmp_path / "taste.pptx"
     render_presentation(pages, _design(), {}, path, AgentConfig())
-    review = review_volume(path, pages, tmp_path, visual_review="degraded")
+    review = review_volume(path, pages, tmp_path)
     codes = {issue.code for issue in review.issues}
     assert "card_soup" not in codes
     assert "cramped_header" not in codes

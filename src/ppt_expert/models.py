@@ -41,14 +41,6 @@ class SlideFamily(StrEnum):
     DATA_CARDS = "data_cards"
 
 
-class DeckArchetype(StrEnum):
-    STRATEGY = "strategy"
-    RESEARCH = "research"
-    PRODUCT = "product"
-    NARRATIVE = "narrative"
-    OPERATING = "operating"
-
-
 class VisualForm(StrEnum):
     KPI = "kpi"
     CHART = "chart"
@@ -246,11 +238,10 @@ class GuardReport(BaseModel):
 
 
 class EnvironmentReport(BaseModel):
-    soffice: bool = False
-    pdftoppm: bool = False
-    magick: bool = False
+    soffice: bool = True
+    pdftoppm: bool = True
     pil: bool = True
-    visual_review: Literal["full", "degraded"] = "degraded"
+    visual_review: Literal["full"] = "full"
 
 
 class VolumeReview(BaseModel):
@@ -285,50 +276,6 @@ class OutlinePlan(BaseModel):
         if actual != expected:
             raise ValueError(f"page numbers must be contiguous: expected {expected}, got {actual}")
         return pages
-
-
-class StyleOption(BaseModel):
-    key: Literal["A", "B", "C", "D"]
-    name: str
-    mood: str
-    primary: str
-    secondary: str
-    background: str
-    text: str
-    accent: str
-
-    @field_validator("primary", "secondary", "background", "text", "accent")
-    @classmethod
-    def valid_hex(cls, value: str) -> str:
-        value = value.upper()
-        if len(value) != 7 or not value.startswith("#"):
-            raise ValueError("color must be #RRGGBB")
-        int(value[1:], 16)
-        return value
-
-
-class StyleOptions(BaseModel):
-    options: list[StyleOption] = Field(min_length=4, max_length=4)
-
-    @field_validator("options")
-    @classmethod
-    def unique_keys(cls, values: list[StyleOption]) -> list[StyleOption]:
-        if {item.key for item in values} != {"A", "B", "C", "D"}:
-            raise ValueError("style keys must be A, B, C and D")
-        return values
-
-
-class TypographyProfile(BaseModel):
-    id: str
-    name: str
-    mood: str
-    latin_font: str
-    east_asian_font: str
-    numeric_font: str
-    fallbacks: list[str] = Field(default_factory=list)
-    recommended: bool = False
-    installed: bool = True
-    specimen_path: str | None = None
 
 
 class KPIItem(BaseModel):
@@ -388,21 +335,6 @@ class Milestone(BaseModel):
     note: str = ""
 
 
-class DeckBrief(BaseModel):
-    objective: str
-    audience: str = ""
-    decision_context: str = ""
-    duration_minutes: int = 20
-    language: str = "en"
-    slide_count: int = 1
-    primary_archetype: DeckArchetype = DeckArchetype.RESEARCH
-    secondary_archetype: DeckArchetype | None = None
-    density: Literal["low", "medium", "high"] = "medium"
-
-    def needs_confirmation(self) -> bool:
-        return not self.audience.strip() or not self.objective.strip()
-
-
 class EvidenceItem(BaseModel):
     id: str
     kind: Literal["claim", "metric", "quote", "event", "recommendation", "risk"] = "claim"
@@ -423,18 +355,6 @@ class SlideQuality(BaseModel):
     score: int = Field(ge=0, le=100)
     family: str
     issues: list[str] = Field(default_factory=list)
-
-
-class ReferenceAnalysis(BaseModel):
-    source_type: Literal["template", "images", "mixed"]
-    template_path: str | None = None
-    image_paths: list[str] = Field(default_factory=list)
-    preview_paths: list[str] = Field(default_factory=list)
-    style: StyleOption
-    title_font: str | None = None
-    body_font: str | None = None
-    notes: list[str] = Field(default_factory=list)
-    layout_families: list[str] = Field(default_factory=list)
 
 
 class DesignSpec(BaseModel):
@@ -547,7 +467,6 @@ class StoryPage(BaseModel):
     visual_form: VisualForm | None = None
     confidence: Literal["confirmed", "estimated", "illustrative"] = "estimated"
     purpose: str = ""
-    composition: str = ""
     role: PageRole | None = None
     speaker_notes: str = ""
 
