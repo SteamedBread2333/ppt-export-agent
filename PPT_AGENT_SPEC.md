@@ -182,8 +182,8 @@ Implemented nodes live in `ppt_expert.graph.build_graph`.
 
 ### Phase 1 — Intent and recipe
 
-1. `parse_intent` fills `IntentSlots` (topic, audience, objective, form) and
-   writes `intent.json`, `outline.json`, and `foundations.json`.
+1. `parse_intent` fills `IntentSlots` and `OutlinePlan` in **one** structured
+   host call, then writes `intent.json`, `outline.json`, and `foundations.json`.
 2. `confirm_intent` interrupts only when topic, audience, or objective is empty.
 3. `match_recipe` selects the closest `RecipeId` and writes `StyleBrief` plus
    `tokens.json` / `style-brief.json`. The match is a **recommendation**, not a
@@ -251,8 +251,9 @@ Every run renders the contact sheet. Missing LibreOffice or pdftoppm is a
 hard error.
 
 1. `soffice` → PDF → `pdftoppm -r 70` → PIL montage `render/montage.png`
-2. Four representative pages at ~130dpi: cover, densest page, special-element
-   page, close (or overview anomaly)
+2. Four representative pages (cover, densest, special-element, close) are
+   inspected in the pptx package — assertion title, overflow, columns,
+   implication — without a second hi-res raster. Vision reviews the montage.
 
 `HostRuntime.critique_images` (or a vision-capable `host.model`) **must**
 review that montage. Findings keep the critic's severity. Errors route to
@@ -275,7 +276,9 @@ Native-edit skips recipe-token geometry (`card_soup`, cramped header, empty
 bottom, footer lock) so brand art is not punished. Montage render and vision
 critique still run on template decks.
 
-Repair **only affected pages** (`merge_repaired_pages`), then rebuild.
+Repair **only affected pages** (`merge_repaired_pages`), then rebuild. The
+repair host call receives failing pages in full and compact locked-page
+context; it does not regenerate the design spec (tokens already won).
 
 ### Phase 6 — XML audit, delivery, cleanup
 

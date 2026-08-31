@@ -10,7 +10,7 @@ from pptx.util import Inches
 
 from ppt_expert import AgentConfig, HostRuntime, create_ppt_agent
 from ppt_expert.demo_runtime import fake_critique_images, fake_structured_generate
-from ppt_expert.models import QualityIssue, StoryDesignBundle, VisionCritique
+from ppt_expert.models import QualityIssue, StoryDraft, VisionCritique
 
 
 def _runtime(structured_generate=fake_structured_generate, critique_images=fake_critique_images):
@@ -86,6 +86,9 @@ async def test_end_to_end_interrupt_and_resume(tmp_path: Path) -> None:
     assert Path(artifacts["montage_path"]).is_file()
     metrics = Path(artifacts["project_dir"]) / "metrics.jsonl"
     assert metrics.exists()
+    nodes = [json.loads(line)["node"] for line in metrics.read_text(encoding="utf-8").splitlines() if line]
+    assert nodes.count("parse_intent") == 1
+    assert "parse_outline" not in nodes
     presentation = Presentation(artifacts["pptx_path"])
     assert len(presentation.slides) == 4
     assert any(shape.has_chart for shape in presentation.slides[1].shapes)
@@ -113,15 +116,18 @@ async def test_runtime_uses_host_model_structured_output() -> None:
 @pytest.mark.asyncio
 async def test_validation_failure_routes_through_repair(tmp_path: Path) -> None:
     story_calls = 0
+    repair_prompts: list[str] = []
 
     def host_generate(prompt, schema):
         nonlocal story_calls
         result = fake_structured_generate(prompt, schema)
-        if schema is StoryDesignBundle:
+        if schema is StoryDraft:
             story_calls += 1
             if story_calls == 1:
                 result = result.model_copy(deep=True)
                 result.pages[0].content = ["x" * 400]
+            else:
+                repair_prompts.append(prompt)
         return result
 
     config = _config(tmp_path)
@@ -133,6 +139,9 @@ async def test_validation_failure_routes_through_repair(tmp_path: Path) -> None:
     assert completed["validation"]["valid"] is True
     assert state["repair_attempts"] >= 1
     assert story_calls == 2
+    assert repair_prompts
+    assert "locked" in repair_prompts[0]
+    assert '"design"' not in repair_prompts[0]
 
 
 @pytest.mark.asyncio
@@ -217,7 +226,7 @@ async def test_montage_critique_repairs_flagged_pages(tmp_path: Path) -> None:
     def host_generate(prompt, schema):
         nonlocal story_calls
         result = fake_structured_generate(prompt, schema)
-        if schema is StoryDesignBundle:
+        if schema is StoryDraft:
             story_calls += 1
         return result
 

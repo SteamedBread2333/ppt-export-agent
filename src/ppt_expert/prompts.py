@@ -5,7 +5,7 @@ from typing import Any
 
 from ppt_expert.recipes import FOUNDATIONS
 
-SYSTEM_RULES = """You are a presentation visual director, not a slide filler.
+STORY_RULES = """You are a presentation visual director, not a slide filler.
 1. Preserve the user's outline. Do not add, remove, or alter slide counts, titles,
    or core facts; only refine the writing into assertions.
 2. Choose a narrative page role: cover, overview, context, evidence, structure,
@@ -18,31 +18,12 @@ SYSTEM_RULES = """You are a presentation visual director, not a slide filler.
 """
 
 
-def intent_prompt(request: str) -> str:
-    foundations = "\n".join(f"- {item}" for item in FOUNDATIONS)
-    return f"""{SYSTEM_RULES}
-Production foundations:
-{foundations}
-
-Fill the four production slots from the user request:
-- topic: what the deck is about
-- audience: who sees it and in what setting
-- objective: the judgment or action it must produce
-- slide_count, density (low/medium/high), editable, delivery_format
-
-User input:
-{request}
-"""
-
-
-def outline_prompt(request: str, intent: dict[str, Any] | None = None) -> str:
-    return f"""{SYSTEM_RULES}
-Parse the user input into a slide-by-slide outline of assertion titles.
-If the user provides only a topic, create a complete structure of
-{ (intent or {}).get("slide_count", 8) } slides. Preserve explicit numbering.
-
-Intent:
-{json.dumps(intent or {}, ensure_ascii=False)}
+def parse_prompt(request: str) -> str:
+    return f"""Fill intent slots and a slide-by-slide outline from the user request.
+Intent: topic, audience, objective, slide_count, density, editable, delivery_format.
+Leave audience or objective empty when the request does not state them.
+Outline: contiguous page numbers, assertion titles, core facts preserved from the request.
+If the user gives no outline, create slide_count slides (default 8).
 
 User input:
 {request}
@@ -54,7 +35,11 @@ def story_design_prompt(
     brief: dict[str, Any] | None = None,
     evidence: list[dict[str, Any]] | None = None,
 ) -> str:
-    return f"""{SYSTEM_RULES}
+    foundations = "\n".join(f"- {item}" for item in FOUNDATIONS)
+    return f"""{STORY_RULES}
+Production foundations:
+{foundations}
+
 Produce STORY pages from the outline and approved style brief.
 - Page count, numbering, titles, and core facts map one-to-one to the outline.
 - role must be one of: cover, overview, context, evidence, structure, expansion,
@@ -64,36 +49,92 @@ Produce STORY pages from the outline and approved style brief.
 - Bind evidence_ids. chart uses chart_type line|column|bar|area and numeric series.
 - layout may be text. family may match the role. image_id stays null on consulting
   evidence pages.
-- DESIGN colors must come from the approved brief; do not invent hex values.
+- Do not invent colors, fonts, or a design spec; tokens are already approved.
 
 Style brief:
-{json.dumps(brief or {}, ensure_ascii=False)}
+{_dumps(brief or {})}
 
 Evidence:
-{json.dumps(evidence or [], ensure_ascii=False)}
+{_dumps(evidence or [])}
 
 Outline:
-{json.dumps(outline, ensure_ascii=False)}
+{_dumps(outline)}
 """
 
 
 def repair_prompt(
     outline: dict[str, Any],
     story: list[dict[str, Any]],
-    design: dict[str, Any],
     issues: list[dict[str, Any]],
     pages: list[int] | None = None,
     notes: str = "",
 ) -> str:
-    scope = f"Repair only slides {pages}." if pages else "Repair only the responsible parts."
     user_notes = f"\nReviewer notes: {notes}" if notes else ""
-    return f"""{SYSTEM_RULES}
+    failing = [number for number in (pages or []) if number]
+    if failing:
+        scope = (
+            f"Repair only slides {failing}. Return only those pages. "
+            "Do not rewrite locked slides."
+        )
+        payload = {
+            "repair": [item for item in story if item.get("number") in set(failing)],
+            "locked": [_page_context(item) for item in story if item.get("number") not in set(failing)],
+        }
+    else:
+        scope = "Repair only the responsible parts. Return the complete story."
+        payload = {"story": story}
+    return f"""{STORY_RULES}
 Validation or critique found the issues below. {scope} Do not change outline
-length, titles, or facts. Preserve native charts, tables, KPIs, and tokens.
-Return the complete repaired result.{user_notes}
+length, titles, or facts. Preserve native charts, tables, KPIs, and tokens.{user_notes}
 
-Outline: {json.dumps(outline, ensure_ascii=False)}
-STORY: {json.dumps(story, ensure_ascii=False)}
-DESIGN: {json.dumps(design, ensure_ascii=False)}
-Issues: {json.dumps(issues, ensure_ascii=False)}
+Outline: {_dumps(_outline_context(outline))}
+Pages: {_dumps(payload)}
+Issues: {_dumps(issues)}
 """
+
+
+def _page_context(page: dict[str, Any]) -> dict[str, Any]:
+    return _compact(
+        {
+            "number": page.get("number"),
+            "title": page.get("title"),
+            "role": page.get("role"),
+            "family": page.get("family"),
+            "takeaway": page.get("takeaway"),
+        }
+    )
+
+
+def _outline_context(outline: dict[str, Any]) -> dict[str, Any]:
+    pages = [
+        {
+            "number": page.get("number"),
+            "title": page.get("title"),
+            "core_content": page.get("core_content"),
+        }
+        for page in outline.get("pages") or []
+    ]
+    return _compact(
+        {
+            "title": outline.get("title"),
+            "audience": outline.get("audience"),
+            "purpose": outline.get("purpose"),
+            "pages": pages,
+        }
+    )
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(_compact(value), ensure_ascii=False, separators=(",", ":"))
+
+
+def _compact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _compact(item) for key, item in value.items() if not _omit(item)}
+    if isinstance(value, list):
+        return [_compact(item) for item in value]
+    return value
+
+
+def _omit(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}

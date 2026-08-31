@@ -7,7 +7,7 @@ from ppt_expert.models import (
     ChartSeries,
     ChartSpec,
     ChartType,
-    DesignSpec,
+    IntentOutline,
     IntentSlots,
     KPIItem,
     LayoutType,
@@ -15,7 +15,7 @@ from ppt_expert.models import (
     OutlinePlan,
     PageRole,
     SlideFamily,
-    StoryDesignBundle,
+    StoryDraft,
     StoryPage,
     VisionCritique,
 )
@@ -23,6 +23,11 @@ from ppt_expert.models import (
 
 def fake_structured_generate(prompt: str, schema: type) -> Any:
     """Deterministic offline host used only by tests and `ppt-expert demo`."""
+    if schema is IntentOutline:
+        return IntentOutline(
+            intent=fake_structured_generate(prompt, IntentSlots),
+            outline=fake_structured_generate(prompt, OutlinePlan),
+        )
     if schema is IntentSlots:
         return IntentSlots(
             topic="PPT Expert workflow",
@@ -63,8 +68,8 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                 ),
             ],
         )
-    if schema is StoryDesignBundle:
-        return StoryDesignBundle(
+    if schema is StoryDraft:
+        return StoryDraft(
             pages=[
                 StoryPage(
                     number=1,
@@ -137,17 +142,6 @@ def fake_structured_generate(prompt: str, schema: type) -> Any:
                     speaker_notes="Close on the delivery gate.",
                 ),
             ],
-            design=DesignSpec(
-                style_name="consulting",
-                mood="Analytical, compressed, calm",
-                primary="#1F4E79",
-                secondary="#44505C",
-                background="#F7F8FA",
-                text="#1B242C",
-                accent="#1F4E79",
-                illustration_style="vector_first",
-                typography_profile="consulting",
-            ),
         )
     raise ValueError(f"Unsupported demo schema: {schema.__name__}")
 

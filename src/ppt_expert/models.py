@@ -526,9 +526,13 @@ class StoryPage(BaseModel):
         }
 
 
-class StoryDesignBundle(BaseModel):
+class StoryDraft(BaseModel):
     pages: list[StoryPage] = Field(min_length=1)
-    design: DesignSpec
+
+
+class IntentOutline(BaseModel):
+    intent: IntentSlots
+    outline: OutlinePlan
 
 
 class ImageRequest(BaseModel):

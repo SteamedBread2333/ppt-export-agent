@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 
 def record_metric(project_dir: str | Path, node: str, started: float, **fields: Any) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from pathlib import Path
@@ -20,36 +21,46 @@ async def generate_assets(
     output_dir: Path,
 ) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    results: dict[str, str] = {}
-    for request in requests:
-        digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:12]
-        output_path = output_dir / f"{request.image_id}_{digest}.png"
-        if output_path.exists():
-            try:
-                normalized = _normalize_to_png(output_path, output_path)
-            except OSError as exc:
-                LOGGER.warning("Cached image is invalid for %s: %s", request.image_id, exc)
-                _placeholder(output_path, request, design)
-                normalized = output_path.resolve()
-            results[request.image_id] = str(normalized)
-            continue
+    if not requests:
+        return {}
+    completed = await asyncio.gather(
+        *[_materialize(runtime, request, design, output_dir) for request in requests]
+    )
+    return dict(completed)
+
+
+async def _materialize(
+    runtime: HostRuntime,
+    request: ImageRequest,
+    design: DesignSpec,
+    output_dir: Path,
+) -> tuple[str, str]:
+    digest = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()[:12]
+    output_path = output_dir / f"{request.image_id}_{digest}.png"
+    if output_path.exists():
         try:
-            generated = await runtime.generate_image(request, output_path)
-        except Exception as exc:  # noqa: BLE001 - host tools can raise provider-specific errors
-            LOGGER.warning("Host image generation failed for %s: %s", request.image_id, exc)
-            generated = None
-        candidate = _generated_candidate(generated, output_path)
-        if candidate is not None:
-            try:
-                generated = _normalize_to_png(candidate, output_path)
-            except OSError as exc:
-                LOGGER.warning("Generated image conversion failed for %s: %s", request.image_id, exc)
-                generated = None
-        if generated is None:
+            normalized = _normalize_to_png(output_path, output_path)
+        except OSError as exc:
+            LOGGER.warning("Cached image is invalid for %s: %s", request.image_id, exc)
             _placeholder(output_path, request, design)
-            generated = output_path.resolve()
-        results[request.image_id] = str(generated)
-    return results
+            normalized = output_path.resolve()
+        return request.image_id, str(normalized)
+    try:
+        generated = await runtime.generate_image(request, output_path)
+    except Exception as exc:  # noqa: BLE001 - host tools can raise provider-specific errors
+        LOGGER.warning("Host image generation failed for %s: %s", request.image_id, exc)
+        generated = None
+    candidate = _generated_candidate(generated, output_path)
+    if candidate is not None:
+        try:
+            generated = _normalize_to_png(candidate, output_path)
+        except OSError as exc:
+            LOGGER.warning("Generated image conversion failed for %s: %s", request.image_id, exc)
+            generated = None
+    if generated is None:
+        _placeholder(output_path, request, design)
+        generated = output_path.resolve()
+    return request.image_id, str(generated)
 
 
 def _generated_candidate(generated: Path | None, output_path: Path) -> Path | None:

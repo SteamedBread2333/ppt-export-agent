@@ -20,12 +20,13 @@ from ppt_expert.models import (
     EnvironmentReport,
     GuardReport,
     ImageRequest,
+    IntentOutline,
     IntentSlots,
     OutlinePlan,
     PageRole,
     PPTAgentState,
     RecipeId,
-    StoryDesignBundle,
+    StoryDraft,
     StoryPage,
     StyleBrief,
     ValidationReport,
@@ -34,7 +35,7 @@ from ppt_expert.models import (
 from ppt_expert.planning import attach_evidence, extract_evidence
 from ppt_expert.pptx import render_presentation
 from ppt_expert.preview import cleanup_render_intermediates
-from ppt_expert.prompts import intent_prompt, outline_prompt, repair_prompt, story_design_prompt
+from ppt_expert.prompts import parse_prompt, repair_prompt, story_design_prompt
 from ppt_expert.recipes import (
     FOUNDATIONS,
     build_style_brief,
@@ -51,16 +52,11 @@ from ppt_expert.validation import validate_presentation, write_validation_report
 
 def build_graph(checkpointer):
     async def parse_intent(state: PPTAgentState, runtime: Runtime[GraphContext]) -> dict:
-        intent = await _generate(
-            runtime, intent_prompt(state["request"]), IntentSlots, state, "parse_intent"
+        parsed = await _generate(
+            runtime, parse_prompt(state["request"]), IntentOutline, state, "parse_intent"
         )
-        outline = await _generate(
-            runtime,
-            outline_prompt(state["request"], intent.model_dump(mode="json")),
-            OutlinePlan,
-            state,
-            "parse_outline",
-        )
+        intent = parsed.intent
+        outline = parsed.outline
         evidence = extract_evidence(outline)
         project = Path(state["project_dir"])
         (project / "intent.json").write_text(intent.model_dump_json(indent=2), encoding="utf-8")
@@ -175,7 +171,7 @@ def build_graph(checkpointer):
                 brief=state.get("style_brief"),
                 evidence=list(state.get("evidence", [])),
             ),
-            StoryDesignBundle,
+            StoryDraft,
             state,
             "plan_narrative",
         )
@@ -272,15 +268,8 @@ def build_graph(checkpointer):
         project = Path(state["project_dir"])
         if not review.montage_path or not review.pdf_path:
             raise RuntimeError("Montage review did not produce montage.png and PDF")
-        from ppt_expert.preview import render_representative_pages
         from ppt_expert.vision import critique_montage
 
-        render_representative_pages(
-            review.pdf_path,
-            project / "render",
-            review.representative_pages,
-            dpi=130,
-        )
         extra = await critique_montage(runtime.context.host, [review.montage_path])
         if extra:
             review.issues.extend(extra)
@@ -329,21 +318,22 @@ def build_graph(checkpointer):
             repair_prompt(
                 state["outline"],
                 state["story"],
-                state["design"],
                 [issue.model_dump(mode="json") for issue in report.issues]
                 + [issue.model_dump(mode="json") for issue in review_issues],
                 pages=failing,
                 notes=state.get("delivery_notes", ""),
             ),
-            StoryDesignBundle,
+            StoryDraft,
             state,
             "repair_pages",
         )
         outline = OutlinePlan.model_validate(state["outline"])
-        pages = _complete_story(outline, bundle.pages, state)
+        current = [StoryPage.model_validate(item) for item in state["story"]]
         if failing:
-            current = [StoryPage.model_validate(item) for item in state["story"]]
-            pages = merge_repaired_pages(current, pages, failing)
+            merged = merge_repaired_pages(current, bundle.pages, failing)
+            pages = merge_repaired_pages(current, _complete_story(outline, merged, state), failing)
+        else:
+            pages = _complete_story(outline, bundle.pages, state)
         tokens = DesignTokens.model_validate(state["tokens"])
         design = tokens.to_design_spec()
         write_contracts(Path(state["project_dir"]), pages, design)

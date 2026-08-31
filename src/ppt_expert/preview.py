@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 from pathlib import Path
 
@@ -19,10 +20,17 @@ def render_previews(
     source = Path(pptx_path).expanduser().resolve()
     destination = Path(output_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
+    profile = destination / ".lo-profile"
+    profile.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
             executable,
             "--headless",
+            "--norestore",
+            "--nolockcheck",
+            "--nodefault",
+            "--nofirststartwizard",
+            f"-env:UserInstallation={profile.resolve().as_uri()}",
             "--convert-to",
             "pdf",
             "--outdir",
@@ -33,6 +41,7 @@ def render_previews(
         capture_output=True,
         text=True,
         timeout=120,
+        env=os.environ.copy(),
     )
     pdf = destination / f"{source.stem}.pdf"
     if result.returncode != 0 or not pdf.exists():
@@ -90,6 +99,8 @@ def render_montage(
         tile.close()
     out = Path(output_dir) / "montage.png"
     montage.save(out)
+    for path in images:
+        Path(path).unlink(missing_ok=True)
     return str(out.resolve()), pdf
 
 
