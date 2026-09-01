@@ -1,5 +1,6 @@
-# PPT Expert Agent
-
+<h1 align="center">
+  PPT Expert Agent
+</h1>
 <p align="center">
   <strong>A host-native, stateful presentation studio built with LangGraph.</strong>
 </p>
